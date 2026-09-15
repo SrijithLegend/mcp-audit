@@ -1,13 +1,19 @@
+import asyncio
+import json
+
 import typer
+
+from client import fetch_inventory
 
 __version__ = "1.0.0"
 
 app = typer.Typer()
 
 @app.command()
-def scan():
-    """Scan for issues"""
-    print("Scanning for issues...")
+def scan(command: str, args: list[str] = typer.Argument(None)):
+    """Scan an MCP server's tool inventory"""
+    inventory = asyncio.run(fetch_inventory(command, args or []))
+    print(json.dumps(inventory, indent=2))
 
 @app.command()
 def report():
