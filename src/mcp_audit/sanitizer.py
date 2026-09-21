@@ -3,10 +3,18 @@ _SUBSCHEMA = ("items", "additionalProperties", "contains", "if", "then", "else",
 _SUBSCHEMA_MAP = ("properties", "patternProperties", "$defs", "definitions")
 _SUBSCHEMA_LIST = ("anyOf", "oneOf", "allOf", "prefixItems")
 
+# Free-text keywords the model reads but that constrain nothing about validity.
+# `default` belongs here: it is a pure annotation, so it carries prose without
+# affecting whether a call validates. enum/const deliberately survive -- those
+# DO constrain the call surface, and removing them would change behavior for
+# reasons unrelated to injected prose, confounding the differential.
+_PROSE = ("description", "title", "examples", "$comment", "deprecated", "default")
+
 
 def sanitize(inventory: dict) -> dict:
     """Strip prose from descriptions, keep only structural facts."""
     return {
+        "instructions": "",  # server instructions are pure prose -- drop them entirely
         "tools": [
             {
                 "name": t["name"],
@@ -31,10 +39,17 @@ def _strip_schema(schema):
     """
     if not isinstance(schema, dict):
         return schema
-    out = {k: v for k, v in schema.items() if k not in ("description", "title")}
+    out = {
+        k: v
+        for k, v in schema.items()
+        if k not in _PROSE and not k.startswith("x-")
+    }
     for k in _SUBSCHEMA:
-        if isinstance(out.get(k), dict):
-            out[k] = _strip_schema(out[k])
+        v = out.get(k)
+        if isinstance(v, dict):
+            out[k] = _strip_schema(v)
+        elif isinstance(v, list):  # draft-07 tuple form: "items": [schema, schema]
+            out[k] = [_strip_schema(e) for e in v]
     for k in _SUBSCHEMA_MAP:
         if isinstance(out.get(k), dict):
             out[k] = {n: _strip_schema(s) for n, s in out[k].items()}
@@ -48,7 +63,8 @@ if __name__ == "__main__":  # self-check: prose gone at every depth, call surfac
     import json
     import pathlib
 
-    raw = json.loads(pathlib.Path("samples/filesystem.json").read_text())
+    sample = pathlib.Path(__file__).resolve().parents[2] / "samples" / "filesystem.json"
+    raw = json.loads(sample.read_text())
     clean = sanitize(raw)
 
     assert [t["name"] for t in clean["tools"]] == [t["name"] for t in raw["tools"]]
@@ -64,6 +80,9 @@ if __name__ == "__main__":  # self-check: prose gone at every depth, call surfac
     tricky = {
         "type": "object",
         "description": "prose",
+        "examples": ["prose"],
+        "$comment": "prose",
+        "x-vendor-hint": "prose",
         "properties": {
             "description": {"type": "string", "description": "prose"},
             "title": {"type": "string"},
@@ -77,5 +96,14 @@ if __name__ == "__main__":  # self-check: prose gone at every depth, call surfac
     assert got["properties"]["items"]["items"] == {"type": "string"}, got
     assert got["properties"]["who"]["anyOf"][0] == {"type": "string"}, got
     assert "description" not in got
+    assert not any(k in got for k in ("examples", "$comment", "x-vendor-hint")), got
+
+    # constraints the model needs to form a valid call must survive
+    keep = _strip_schema({"enum": [1, 2], "const": 3, "default": 1, "description": "prose"})
+    assert keep == {"enum": [1, 2], "const": 3}, keep
+
+    # draft-07 tuple form: prose inside a LIST at "items" must also go
+    tup = _strip_schema({"items": [{"type": "string", "description": "prose"}]})
+    assert tup == {"items": [{"type": "string"}]}, tup
 
     print("ok")
