@@ -6,7 +6,8 @@ import typer
 
 from .client import fetch_inventory
 from .differ import diff
-from .harness import DEFAULT_TASK, TRIALS, run_trial, run_trials
+from .harness import DEFAULT_TASK, MODEL, TRIALS, run_trial, run_trials
+from .report import render
 from .sanitizer import sanitize
 
 app = typer.Typer()
@@ -47,7 +48,8 @@ def scan(
     inventory = asyncio.run(fetch_inventory(command, args or []))
     real = run_trials(inventory, task, trials)
     sanitized = run_trials(sanitize(inventory), task, trials)
-    print(json.dumps(diff(real, sanitized), indent=2))
+    target = " ".join([command, *(args or [])])
+    print(render(diff(real, sanitized), target, MODEL))
 
 
 if __name__ == "__main__":
