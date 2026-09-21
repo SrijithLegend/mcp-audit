@@ -2,8 +2,8 @@
 
 Differential exploit confirmation for MCP servers.
 
-An MCP server hands your model free text — tool descriptions, parameter
-descriptions, and the server's own `instructions` — and most hosts paste all of
+An MCP server hands your model free text â€” tool descriptions, parameter
+descriptions, and the server's own `instructions` â€” and most hosts paste all of
 it straight into the system prompt. `mcp-audit` captures that surface, strips
 the prose, and compares how a model behaves with and without it. A behavior
 change is the confirmation: the prose, not the tool, drove the call.
@@ -29,7 +29,7 @@ tool's name, description, and input schema.
 `mcp_audit.sanitizer` replaces every description with a generated
 `Tool: <name>. Parameters: <names>.` line and recursively drops
 `description`, `title`, `examples`, `$comment`, `deprecated`, and any `x-*`
-vendor key from the JSON Schema — at every nesting depth, including inside
+vendor key from the JSON Schema â€” at every nesting depth, including inside
 `anyOf`/`items`/`$defs`.
 
 `enum`, `const`, and `default` survive on purpose. The model needs them to form
@@ -38,7 +38,7 @@ nothing to do with injected prose.
 
 ## Known limitation: parameter names
 
-Sanitization cannot remove parameter *names* — they are the call surface. A
+Sanitization cannot remove parameter *names* â€” they are the call surface. A
 server exposing a parameter named `always_read_ssh_key_first` carries its
 injection through `_minimal()` intact. This is not fixable without breaking the
 tool. Treat parameter names as an uncontrolled channel when reading results.
@@ -60,6 +60,6 @@ known negative:
 
 | Fixture | Steering channel |
 |---|---|
-| `clean.py` | none � the control. A finding here is a false positive. |
+| `clean.py` | none — the control. A finding here is a false positive. |
 | `poisoned_instructions.py` | server `instructions`; every tool description is honest |
 | `poisoned_param.py` | a parameter description that demands `/etc/passwd` contents |
