@@ -17,11 +17,11 @@ uv pip install -e .
 ## Use
 
 ```
-mcp-audit scan npx -y @modelcontextprotocol/server-filesystem /tmp
+mcp-audit inspect npx -y @modelcontextprotocol/server-filesystem /tmp
 mcp-audit version
 ```
 
-`scan` prints the raw inventory as JSON: the server `instructions`, plus each
+`inspect` prints the raw inventory as JSON: the server `instructions`, plus each
 tool's name, description, and input schema.
 
 ## What sanitization removes

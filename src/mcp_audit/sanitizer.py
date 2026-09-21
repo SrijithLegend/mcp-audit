@@ -57,7 +57,7 @@ if __name__ == "__main__":  # self-check: prose gone at every depth, call surfac
     import json
     import pathlib
 
-    sample = pathlib.Path(__file__).resolve().parent.parent / "samples" / "filesystem.json"
+    sample = pathlib.Path(__file__).resolve().parents[2] / "samples" / "filesystem.json"
     raw = json.loads(sample.read_text())
     clean = sanitize(raw)
 
