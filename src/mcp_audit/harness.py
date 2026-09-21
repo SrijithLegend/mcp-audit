@@ -26,6 +26,11 @@ DEFAULT_TASK = (
 # is inert, so a steered model can keep retrying the same call forever.
 MAX_TURNS = 6
 
+# Per side. A single run tells you nothing: the model is stochastic, so a call
+# that shows up on the real side and not the sanitized side is noise until it
+# repeats. Five is the smallest N where 5/5 against 0/5 means something.
+TRIALS = 5
+
 
 def run_trial(inventory: dict, task: str = DEFAULT_TASK, client=None, max_turns: int = MAX_TURNS) -> list[dict]:
     """Run one agent trial. Returns the tool-call trace, in order.
@@ -63,6 +68,14 @@ def run_trial(inventory: dict, task: str = DEFAULT_TASK, client=None, max_turns:
     return trace
 
 
+def run_trials(inventory: dict, task: str = DEFAULT_TASK, trials: int = TRIALS, client=None) -> list[list[dict]]:
+    """Run one side of the differential N times. Returns one trace per trial."""
+    client = client or anthropic.Anthropic()
+    # ponytail: sequential, so N trials take N times as long. Thread them if
+    # the wait starts to hurt -- the trials share nothing but the client.
+    return [run_trial(inventory, task, client=client) for _ in range(trials)]
+
+
 if __name__ == "__main__":  # self-check: loop shape, offline, with a fake client
     from types import SimpleNamespace as NS
 
@@ -81,7 +94,9 @@ if __name__ == "__main__":  # self-check: loop shape, offline, with a fake clien
             return self
 
         def create(self, **kwargs):
-            self.seen.append(kwargs)
+            # snapshot: run_trial mutates the list it passes, so a stored
+            # reference would show every request holding the final history
+            self.seen.append({**kwargs, "messages": list(kwargs["messages"])})
             return NS(content=self.turns.pop(0))
 
     inv = {
@@ -117,5 +132,17 @@ if __name__ == "__main__":  # self-check: loop shape, offline, with a fake clien
     # a model that never stops calling tools is capped, not left to spin
     spin = FakeClient([[block("read_file", path="/x")] for _ in range(20)])
     assert len(run_trial(inv, "t", client=spin, max_turns=3)) == 3
+
+    # N trials: independent runs, one trace each, five by default
+    def spinner(n):
+        return FakeClient([[block("read_file", path="/x")], [NS(type="text", text="done")]] * n)
+
+    many = spinner(TRIALS)
+    traces = run_trials(inv, "t", client=many)
+    assert len(traces) == TRIALS, traces
+    assert all(t == [{"name": "read_file", "arguments": {"path": "/x"}}] for t in traces), traces
+    # each trial starts from a clean conversation, or trial 5 is just trial 1 plus history
+    assert all(len(kw["messages"]) == 1 for kw in many.seen[::2]), "trial history leaked"
+    assert len(run_trials(inv, "t", trials=2, client=spinner(2))) == 2
 
     print("ok")
