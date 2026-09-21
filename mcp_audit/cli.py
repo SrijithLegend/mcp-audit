@@ -1,11 +1,10 @@
 import asyncio
 import json
+from importlib.metadata import version as _pkg_version
 
 import typer
 
-from client import fetch_inventory
-
-__version__ = "1.0.0"
+from .client import fetch_inventory
 
 app = typer.Typer()
 
@@ -23,7 +22,7 @@ def report():
 @app.command()
 def version():
     """Show the version of the application"""
-    print(f"mcp-audit version {__version__}")
+    print(f"mcp-audit version {_pkg_version('mcp-audit')}")
 
 if __name__ == "__main__":
     app()

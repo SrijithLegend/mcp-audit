@@ -6,9 +6,12 @@ async def fetch_inventory(command: str, args: list[str]) -> dict:
     params = StdioServerParameters(command=command, args=args)
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
-            await session.initialize()
+            init = await session.initialize()
             tools = await session.list_tools()
             return {
+                # Injected straight into the client's system prompt by most hosts --
+                # a wider surface than tool descriptions, so it is part of the inventory.
+                "instructions": getattr(init, "instructions", None) or "",
                 "tools": [
                     {
                         "name": t.name,
@@ -37,4 +40,5 @@ if __name__ == "__main__":  # self-check: scan a throwaway server, expect its on
     assert [t["name"] for t in inv["tools"]] == ["add"], inv
     assert inv["tools"][0]["description"] == "Add two numbers", inv
     assert inv["tools"][0]["input_schema"]["required"] == ["a", "b"], inv
+    assert "instructions" in inv, inv
     print("ok")
