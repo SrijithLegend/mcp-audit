@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    "anthropic>=1.0.0",
     "mcp>=2.2.0,<3",
     "typer>=0.27.0",
 ]
