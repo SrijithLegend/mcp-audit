@@ -351,7 +351,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", specifier = ">=2.2.0" },
+    { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "typer", specifier = ">=0.27.0" },
 ]
 
