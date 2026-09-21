@@ -1,3 +1,9 @@
+# JSON Schema keywords whose values are themselves schemas (or maps/lists of schemas).
+_SUBSCHEMA = ("items", "additionalProperties", "contains", "if", "then", "else", "not")
+_SUBSCHEMA_MAP = ("properties", "patternProperties", "$defs", "definitions")
+_SUBSCHEMA_LIST = ("anyOf", "oneOf", "allOf", "prefixItems")
+
+
 def sanitize(inventory: dict) -> dict:
     """Strip prose from descriptions, keep only structural facts."""
     return {
@@ -5,7 +11,7 @@ def sanitize(inventory: dict) -> dict:
             {
                 "name": t["name"],
                 "description": _minimal(t),
-                "input_schema": t["input_schema"],
+                "input_schema": _strip_schema(t["input_schema"]),
             }
             for t in inventory["tools"]
         ]
@@ -17,7 +23,28 @@ def _minimal(tool: dict) -> str:
     return f"Tool: {tool['name']}. Parameters: {', '.join(params) or 'none'}."
 
 
-if __name__ == "__main__":  # self-check: prose gone, call surface intact
+def _strip_schema(schema):
+    """Recursively drop author prose (description/title) from a JSON Schema.
+
+    Walks only the keywords whose values are schemas, so a parameter literally
+    named "description" or "title" survives -- a blind key-delete would eat it.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: v for k, v in schema.items() if k not in ("description", "title")}
+    for k in _SUBSCHEMA:
+        if isinstance(out.get(k), dict):
+            out[k] = _strip_schema(out[k])
+    for k in _SUBSCHEMA_MAP:
+        if isinstance(out.get(k), dict):
+            out[k] = {n: _strip_schema(s) for n, s in out[k].items()}
+    for k in _SUBSCHEMA_LIST:
+        if isinstance(out.get(k), list):
+            out[k] = [_strip_schema(s) for s in out[k]]
+    return out
+
+
+if __name__ == "__main__":  # self-check: prose gone at every depth, call surface intact
     import json
     import pathlib
 
@@ -25,7 +52,30 @@ if __name__ == "__main__":  # self-check: prose gone, call surface intact
     clean = sanitize(raw)
 
     assert [t["name"] for t in clean["tools"]] == [t["name"] for t in raw["tools"]]
-    assert [t["input_schema"] for t in clean["tools"]] == [t["input_schema"] for t in raw["tools"]]
-    assert not any("DEPRECATED" in t["description"] for t in clean["tools"]), "prose survived"
-    assert clean["tools"][0]["description"].startswith("Tool: read_file. Parameters: path")
+    assert not any("DEPRECATED" in t["description"] for t in clean["tools"]), "top-level prose survived"
+    assert "description" not in json.dumps(clean["tools"][0]["input_schema"]), "nested prose survived"
+
+    # required params must survive stripping, in order
+    for c, r in zip(clean["tools"], raw["tools"]):
+        assert c["input_schema"].get("required") == r["input_schema"].get("required"), c["name"]
+        assert list(c["input_schema"].get("properties", {})) == list(r["input_schema"].get("properties", {}))
+
+    # a param NAMED description/title must not be deleted, but its own prose must be
+    tricky = {
+        "type": "object",
+        "description": "prose",
+        "properties": {
+            "description": {"type": "string", "description": "prose"},
+            "title": {"type": "string"},
+            "items": {"type": "array", "items": {"type": "string", "description": "prose"}},
+            "who": {"anyOf": [{"type": "string", "description": "prose"}, {"type": "null"}]},
+        },
+    }
+    got = _strip_schema(tricky)
+    assert sorted(got["properties"]) == ["description", "items", "title", "who"], got
+    assert got["properties"]["description"] == {"type": "string"}, got
+    assert got["properties"]["items"]["items"] == {"type": "string"}, got
+    assert got["properties"]["who"]["anyOf"][0] == {"type": "string"}, got
+    assert "description" not in got
+
     print("ok")
