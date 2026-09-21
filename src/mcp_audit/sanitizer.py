@@ -3,9 +3,12 @@ _SUBSCHEMA = ("items", "additionalProperties", "contains", "if", "then", "else",
 _SUBSCHEMA_MAP = ("properties", "patternProperties", "$defs", "definitions")
 _SUBSCHEMA_LIST = ("anyOf", "oneOf", "allOf", "prefixItems")
 
-# Free-text keywords the model reads but never needs to form a valid call.
-# enum/const/default deliberately survive -- those constrain the call surface.
-_PROSE = ("description", "title", "examples", "$comment", "deprecated")
+# Free-text keywords the model reads but that constrain nothing about validity.
+# `default` belongs here: it is a pure annotation, so it carries prose without
+# affecting whether a call validates. enum/const deliberately survive -- those
+# DO constrain the call surface, and removing them would change behavior for
+# reasons unrelated to injected prose, confounding the differential.
+_PROSE = ("description", "title", "examples", "$comment", "deprecated", "default")
 
 
 def sanitize(inventory: dict) -> dict:
@@ -42,8 +45,11 @@ def _strip_schema(schema):
         if k not in _PROSE and not k.startswith("x-")
     }
     for k in _SUBSCHEMA:
-        if isinstance(out.get(k), dict):
-            out[k] = _strip_schema(out[k])
+        v = out.get(k)
+        if isinstance(v, dict):
+            out[k] = _strip_schema(v)
+        elif isinstance(v, list):  # draft-07 tuple form: "items": [schema, schema]
+            out[k] = [_strip_schema(e) for e in v]
     for k in _SUBSCHEMA_MAP:
         if isinstance(out.get(k), dict):
             out[k] = {n: _strip_schema(s) for n, s in out[k].items()}
@@ -94,6 +100,10 @@ if __name__ == "__main__":  # self-check: prose gone at every depth, call surfac
 
     # constraints the model needs to form a valid call must survive
     keep = _strip_schema({"enum": [1, 2], "const": 3, "default": 1, "description": "prose"})
-    assert keep == {"enum": [1, 2], "const": 3, "default": 1}, keep
+    assert keep == {"enum": [1, 2], "const": 3}, keep
+
+    # draft-07 tuple form: prose inside a LIST at "items" must also go
+    tup = _strip_schema({"items": [{"type": "string", "description": "prose"}]})
+    assert tup == {"items": [{"type": "string"}]}, tup
 
     print("ok")

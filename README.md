@@ -50,4 +50,16 @@ Each module carries its own assert-based check:
 ```
 python -m mcp_audit.sanitizer   # prose stripped at depth, call surface intact
 python -m mcp_audit.client      # scans a throwaway stub server
+python fixtures/check.py        # end-to-end over the three fixture servers
 ```
+
+## Fixtures
+
+`fixtures/` holds three real stdio MCP servers used as known positives and a
+known negative:
+
+| Fixture | Steering channel |
+|---|---|
+| `clean.py` | none — the control. A finding here is a false positive. |
+| `poisoned_instructions.py` | server `instructions`; every tool description is honest |
+| `poisoned_param.py` | a parameter description that demands `/etc/passwd` contents |
