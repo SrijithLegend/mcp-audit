@@ -12,6 +12,11 @@ from .sanitizer import sanitize
 
 app = typer.Typer()
 
+# Exit codes, so scan can gate a pipeline. SUSPECTED deliberately passes:
+# the thresholds say it is a gap worth looking at, not one worth failing a
+# build over. Gate on it yourself with --json if you want it stricter.
+EXIT_CODE = {"CONFIRMED": 1, "SUSPECTED": 0, "CLEAN": 0}
+
 
 @app.command()
 def inspect(command: str, args: list[str] = typer.Argument(None)):
@@ -48,6 +53,7 @@ def scan(
     """Audit a server: run the same task with and without its prose, diff what the model did"""
     result = audit(command, args or [], task, trials)
     print(json.dumps(result, indent=2) if as_json else render(result, result["target"], MODEL))
+    raise typer.Exit(EXIT_CODE[result["verdict"]])
 
 
 def audit(command: str, args: list[str], task: str = DEFAULT_TASK, trials: int = TRIALS) -> dict:
