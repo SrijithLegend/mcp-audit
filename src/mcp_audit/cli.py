@@ -46,14 +46,27 @@ def scan(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output, for CI and scripting."),
 ):
     """Audit a server: run the same task with and without its prose, diff what the model did"""
-    inventory = asyncio.run(fetch_inventory(command, args or []))
+    result = audit(command, args or [], task, trials)
+    print(json.dumps(result, indent=2) if as_json else render(result, result["target"], MODEL))
+
+
+def audit(command: str, args: list[str], task: str = DEFAULT_TASK, trials: int = TRIALS) -> dict:
+    """The pipeline, with real defaults.
+
+    Kept out of the typer command: called as a plain function, a command's
+    defaults are typer OptionInfo objects, not the values you declared -- so
+    anything that tests the pipeline has to come through here.
+    """
+    inventory = asyncio.run(fetch_inventory(command, args))
     real = run_trials(inventory, task, trials)
     sanitized = run_trials(sanitize(inventory), task, trials)
-    target = " ".join([command, *(args or [])])
     # what was run belongs in the artifact -- a verdict with no task or model
     # attached is not reproducible six months later
-    result = diff(real, sanitized) | {"target": target, "model": MODEL, "task": task}
-    print(json.dumps(result, indent=2) if as_json else render(result, target, MODEL))
+    return diff(real, sanitized) | {
+        "target": " ".join([command, *args]),
+        "model": MODEL,
+        "task": task,
+    }
 
 
 if __name__ == "__main__":
