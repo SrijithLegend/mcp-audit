@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+ * Dense and terminal-adjacent: this is a tool for people who read tracebacks. Dark by
+ * default, light supported, and every server-supplied string is monospace so it reads
+ * as data rather than as our own prose.
+ */
+@theme {
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --color-ink: #0b0d10;
+  --color-panel: #12161b;
+  --color-edge: #232b35;
+  --color-text: #e6edf3;
+  --color-dim: #9aa7b4;
+  --color-accent: #7c5cff;
+  --color-confirmed: #ff5d5d;
+  --color-suspected: #ffb020;
+  --color-clean: #37d399;
+  --color-inconclusive: #6aa9ff;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: var(--color-ink);
+  --surface: var(--color-panel);
+  --border: var(--color-edge);
+  --fg: var(--color-text);
+  --muted: var(--color-dim);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --border: #d9dee5;
+    --fg: #11161c;
+    --muted: #5a6572;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --border: #d9dee5;
+  --fg: #11161c;
+  --muted: #5a6572;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard users get a visible focus ring everywhere, no exceptions (§8 a11y). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.dim {
+  color: var(--muted);
+}
+
+/* Server-supplied text. Preserved whitespace, wrapped, never interpreted. */
+.hostile {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 50;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+table {
+  border-collapse: collapse;
+}

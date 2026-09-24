@@ -28,3 +28,6 @@ htmlcov/
 node_modules/
 .next/
 bench/out/
+cloud/web/node_modules/
+cloud/web/.next/
+cloud/api/test.db
