@@ -7,6 +7,8 @@ because a red cell means nothing in a CI log or to a colour-blind reader.
 
 from __future__ import annotations
 
+import io
+
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -35,7 +37,9 @@ def visible(text: str) -> str:
 
 
 def render(report: Report, console: Console | None = None, width: int | None = None) -> str:
-    out = console or Console(record=True, width=width or 100, no_color=False, soft_wrap=False)
+    # Renders into a buffer by default and returns the text: the caller decides where it
+    # goes, so `--json` can keep stdout clean.
+    out = console or Console(record=True, width=width or 100, file=io.StringIO(), soft_wrap=False)
     out.print(f"mcp-audit {report.engine_version} — {visible(report.target)}")
     out.print(
         f"{report.trials} trials per arm"
