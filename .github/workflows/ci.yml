@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI reads the repo and nothing else (SECURITY.md §9).
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-extras --python ${{ matrix.python }}
+      - name: lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: types
+        run: uv run mypy src
+      - name: tests (offline — the live marker is deselected by default)
+        run: uv run pytest -q
+        env:
+          # Belt and braces: no key means a live test could not spend money even if
+          # someone removed the marker filter.
+          ANTHROPIC_API_KEY: ""
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+      - name: pip-audit (known CVEs in our dependency tree)
+        run: uvx pip-audit --strict -r <(uv export --format requirements-txt --no-hashes --all-extras)
+        shell: bash
+      - name: gitleaks (a committed secret is a launch blocker)
+        uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.7
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  dogfood:
+    # We are a security tool: scan our own fixtures on every PR, offline, with a fake
+    # model. Catches a broken pipeline that unit tests can pass around.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+      - run: uv sync --all-extras
+      - run: uv run mcp-audit inspect python fixtures/poisoned_instructions.py --out /tmp/inv.json
+      - run: uv run mcp-audit sanitize --inventory /tmp/inv.json
+      - run: uv run pytest -q tests/test_audit.py tests/test_invariants.py

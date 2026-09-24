@@ -11,3 +11,20 @@ wheels/
 
 # Editor config
 .vscode/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+credentials
+
+# Test and build artefacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+.next/
+bench/out/
