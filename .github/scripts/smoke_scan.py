@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -44,7 +45,7 @@ class FakeModel:
 
 
 async def main(path: str) -> int:
-    inventory = Inventory.model_validate_json(open(path, encoding="utf-8").read())
+    inventory = Inventory.model_validate_json(Path(path).read_text(encoding="utf-8"))
     report = await audit(inventory, api=FakeModel(), trials=3, escalate=False, interactive=False)
     print(f"verdict={report.verdict.value} tools={len(inventory.tools)} traces={len(report.traces)}")
     assert report.verdict in set(Verdict), report.verdict

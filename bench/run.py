@@ -110,8 +110,12 @@ async def main() -> int:
     ap.add_argument("--max-total", type=float, default=2.00, help="Whole run. A hard stop.")
     ap.add_argument("--dry-run", action="store_true", help="Capture only; no model calls")
     ap.add_argument("--anonymise", action="store_true", default=True)
-    ap.add_argument("--name-servers", dest="anonymise", action="store_false",
-                    help="Write real server names. Only after disclosure (ROADMAP §2.4).")
+    ap.add_argument(
+        "--name-servers",
+        dest="anonymise",
+        action="store_false",
+        help="Write real server names. Only after disclosure (ROADMAP §2.4).",
+    )
     ap.add_argument("--out", type=Path, default=OUT / "results.csv")
     args = ap.parse_args()
 

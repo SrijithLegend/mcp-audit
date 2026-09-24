@@ -14,7 +14,7 @@ import os
 import re
 import sys
 import tempfile
-from typing import IO, Any, TextIO, cast
+from typing import Any, TextIO, cast
 
 import anyio
 from mcp import ClientSession, StdioServerParameters
