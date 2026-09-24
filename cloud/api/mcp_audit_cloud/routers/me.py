@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
@@ -21,6 +22,7 @@ from ..schemas import (
     MemberInvite,
     MemberOut,
     MeOut,
+    NotificationSettings,
     OrgCreate,
     OrgOut,
     Page,
@@ -30,6 +32,7 @@ from ..schemas import (
     UsageOut,
 )
 from ..services import quota, retention
+from ..ssrf import validate as ssrf_validate
 
 router = APIRouter(prefix="/v1", tags=["account"])
 
@@ -255,6 +258,44 @@ async def revoke_token(
     # Revocation is immediate: auth checks revoked_at on every request.
     token.revoked_at = datetime.now(UTC)
     return Response(status_code=204)
+
+
+@router.patch("/orgs/{org_id}/notifications")
+async def set_notifications(
+    org_id: UUID,
+    body: NotificationSettings,
+    who: Annotated[Principal, Depends(principal)],
+    db: Annotated[AsyncSession, Depends(session)],
+) -> dict[str, object]:
+    """Outbound webhook and Slack destinations (ROADMAP Phase 6).
+
+    The URLs are validated through the SSRF guard on the way in as well as on every
+    send: a customer who can make us POST to 169.254.169.254 has our metadata.
+    """
+    if org_id != who.org_id:
+        raise not_found("organisation")
+    who.require(Role.OWNER, Role.ADMIN)
+    if "webhooks" not in who.entitlements.features:
+        raise Problem(402, "upgrade_required", "Outbound webhooks are a Pro feature.")
+
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one()
+    for url in (body.webhook_url, body.slack_webhook_url):
+        if url:
+            ssrf_validate(url)
+    org.webhook_url = body.webhook_url
+    org.slack_webhook_url = body.slack_webhook_url
+    if body.webhook_url and not org.webhook_secret:
+        # Generated once, shown once: the receiver needs it to verify our signature.
+        org.webhook_secret = secrets.token_urlsafe(32)[:64]
+    fresh = org.webhook_secret if body.rotate_secret or body.webhook_url else None
+    if body.rotate_secret:
+        fresh = org.webhook_secret = secrets.token_urlsafe(32)[:64]
+    await db.flush()
+    return {
+        "webhook_url": org.webhook_url,
+        "slack_webhook_url": org.slack_webhook_url,
+        "webhook_secret": fresh,
+    }
 
 
 @router.delete("/me", status_code=204)

@@ -203,6 +203,14 @@ class MemberOut(BaseModel):
     role: str
 
 
+class NotificationSettings(BaseModel):
+    """Where to send scan.completed and monitor.changed. Write-only secret."""
+
+    webhook_url: str | None = Field(default=None, max_length=2048)
+    slack_webhook_url: str | None = Field(default=None, max_length=2048)
+    rotate_secret: bool = False
+
+
 class CheckoutRequest(BaseModel):
     plan: Literal["pro", "team"]
     interval: Literal["month", "year"] = "month"

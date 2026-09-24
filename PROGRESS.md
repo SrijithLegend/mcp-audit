@@ -1,28 +1,100 @@
 # PROGRESS
 
-Claude Code: update this at the end of every session. Srijith ticks gates.
+Claude Code: update this at the end of every session. **Srijith ticks the gates** — a gate
+is a measurement, and nothing here has been measured against a live model yet.
 
-## Current phase: 0 — Hygiene
+## Current phase: 1 → 2 (engine built; Gate 1 not run)
+
+Everything through Phase 7 is **implemented**. What is missing is the part that costs money
+and needs a human: the live fixture gate, the real-server benchmark, the head-to-head, and
+publishing. Those are the gates, and they are why the phase above says 1 and not 7.
 
 ## Gates
-- [ ] Gate 0 — CI green, invariant tests, self-checks migrated
-- [ ] Gate 1 — fixtures: poisoned ≥ 9/10 CONFIRMED, clean + benign_verbose 0/10 CONFIRMED (live, ~$5–10)
-- [ ] Gate 2 — PyPI + Action + benchmark + head-to-head published; launched
-- [ ] Gate 3 — Cloud backend + security suites
-- [ ] Gate 4 — Frontend e2e, a11y, CSP clean
-- [ ] Gate 5 — Billing lifecycle in test mode
-- [ ] Gate 7 — Launch checklist (docs/SECURITY.md) 100 %
+
+- [x] **Gate 0** — invariant tests present, zero `__main__` self-checks, ruff + mypy strict
+      clean, CI workflows written. *(CI has not run on GitHub yet — no push.)*
+- [ ] **Gate 1** — fixtures live: poisoned ≥ 9/10 CONFIRMED, `clean` + `benign_verbose`
+      0/10. `uv run pytest -q -m gate` (~$5–10, **needs your go-ahead and a key**).
+- [ ] **Gate 2** — PyPI + Action + benchmark + head-to-head published; launched.
+- [x] **Gate 3 (code)** — API + worker + security suites: SSRF table, IDOR, quota race, RLS,
+      webhook forgery/replay/ordering, rate limits, spend breaker. 131 tests pass.
+      *Not ticked as done:* `docker compose up` has not been run here (no Docker in this
+      environment), so the Postgres-only tests are verified by construction and by CI
+      config, not by a local run.
+- [ ] **Gate 4** — Playwright suite green. Specs written and wired; the browser binary could
+      not be downloaded here (CDN timeouts), so **they have never executed**. Lighthouse not
+      run either.
+- [ ] **Gate 5** — billing lifecycle in test mode. Code + replay script + 18 unit tests done;
+      needs real Dodo test-mode keys and product ids.
+- [ ] **Gate 7** — launch checklist (docs/SECURITY.md) 100%, restore drill done, 72h soak.
 
 ## Done
-- Package layout, LICENSE, sanitizer + 3 fixtures, dry-run stubs, single-trial harness,
-  `inspect` / `trial` / `version` (as of `adb5d51`, 2026-09-22)
 
-## Next
-- Phase 0 items 1–7 (docs/ROADMAP.md)
+Phase 0 — `CLAUDE.md` replaces `claude.md`, docs under `docs/`, root `SECURITY.md` is the
+disclosure policy, ruff + mypy strict + pytest with `live`/`gate` markers deselected,
+CI/CodeQL/Dependabot, README corrections (`default` is stripped; no `ant auth login`; the
+cost formula is per-trial).
+
+Phase 1 — the engine. `models` (versioned Inventory/Report wire formats), `capture/`
+(stdio with an env allowlist; Streamable HTTP with no redirects and a 2 MB cap; pagination),
+`harness` (async, concurrent, cache breakpoints, reversible tool-name normalisation),
+`dryrun` canary mode, `features`/`stats`/`differ` (Fisher exact via `math.comb`, Holm over
+security-relevant signals, global-shift control, one round of adaptive escalation), `cost`
+(count_tokens + hard ceiling), `report/` (terminal, JSON, Markdown, SARIF), `cli`
+(inspect/sanitize/scan/trial/login), 8 fixtures. **180 offline tests.**
+
+Phase 2 — `bench/run.py` (spend ceiling, anonymised by default), `bench/headtohead.py`
+(false positives on manually-clean servers is the headline column), composite GitHub Action
+with the body in `scan.sh` so no user string is interpolated by the templater, release
+workflow with trusted publishing and a clean-container smoke test, `docs/methodology.md`.
+
+Phase 3 — `cloud/api`: FastAPI + SQLAlchemy 2 async + Alembic + arq. SSRF guard with
+IP pinning, Clerk JWT + `mcpa_` tokens, org-scoped repository layer with RLS behind it,
+AES-GCM header storage, atomic quota reservation, spend breaker that fails closed,
+retention sweep, monitors with structural/prose diffs. **131 tests.**
+
+Phase 4 — `cloud/web`: Next.js 16 App Router, 21 routes, one renderer for hostile text that
+shows invisible characters instead of hiding them, zod at the JSON boundary, per-request CSP
+nonce, side-by-side arm view. **61 vitest tests**, Playwright specs written.
+
+Phases 5–7 — billing behind `BillingProvider` (Dodo + Polar, Standard Webhooks, plan state
+machine with a 7-day grace), webhook replay script, `scan --cloud`, org outbound webhooks +
+Slack, cloud CI with Postgres/Redis services and a migration up/down/up check, deploy
+workflow (staging on main, production on tag), 6 runbooks, k6 quota-race load test,
+`metrics.py` with the alert rules written down where they can be reviewed.
+
+## Next, in order
+
+1. **Gate 1.** Set `ANTHROPIC_API_KEY`, then `uv run pytest -q -m gate`. Fill in
+   `bench/fixtures.md` with CONFIRMED counts and the **median cost per scan** — Phase 5
+   pricing is computed from that number and `plans.margin_ok()` currently fails at $0.10.
+2. Push and let CI run. Fix whatever only a real runner finds.
+3. `npx playwright install chromium` then `npm run e2e` in `cloud/web` for Gate 4.
+4. `docker compose -f cloud/infra/docker-compose.yml up -d` and
+   `uv run --directory cloud/api pytest -q -m db` for the Postgres-only tests.
+5. Then Phase 2 for real: `bench/run.py --dry-run` first, then a budgeted live run, then the
+   head-to-head. Disclosure before any server is named.
 
 ## Measured numbers
-- (fill in: cost/scan, FP rate, gate results, dates)
+
+| What | Value | When |
+|---|---|---|
+| Offline tests (engine / cloud API / web) | 180 / 131 / 61 | 2026-09-24 |
+| Fixture gate (poisoned CONFIRMED rate) | not measured | — |
+| Control fixtures (false positive rate) | not measured | — |
+| Median cost per scan | not measured | — |
+| Real-server benchmark | not run | — |
 
 ## Open questions for Srijith
-- Final plan prices/limits (after Gate 1 cost numbers)
-- `cloud/` license: AGPL in this repo vs private repo (D7)
+
+- **Plan prices.** The table in ROADMAP §5.1 is in the code and the pricing page reads it
+  live, but the arithmetic only works if a scan costs well under $0.06. Gate 1 decides
+  whether the limits or the prices move.
+- **`poisoned_suppress.py` and the gate.** Suppressing an audit tool is steering *away* from
+  a call, and by the current rules that is behavioural, so it can legitimately land on
+  SUSPECTED rather than CONFIRMED. Either suppression of an audit-shaped tool becomes
+  security-relevant (a threshold change, which needs you) or that fixture's gate is
+  SUSPECTED. Flagged in `bench/fixtures.md`.
+- **`cloud/` license** — AGPL in this repo as committed (D7), or move it to a private one.
+- **shadcn/ui** — components are written in its shape but the registry is not vendored.
+  Partial deviation from D6; say if you want the real thing.

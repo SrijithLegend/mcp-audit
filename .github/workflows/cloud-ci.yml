@@ -1,0 +1,93 @@
+name: cloud-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["cloud/**", "src/**", ".github/workflows/cloud-ci.yml"]
+  pull_request:
+    paths: ["cloud/**", "src/**", ".github/workflows/cloud-ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mcpaudit
+          POSTGRES_PASSWORD: mcpaudit
+          POSTGRES_DB: mcpaudit_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mcpaudit" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
+    env:
+      ENVIRONMENT: local
+      DEV_AUTH_BYPASS: "1"
+      TEST_DATABASE_URL: postgresql+asyncpg://mcpaudit:mcpaudit@localhost:5432/mcpaudit_test
+      REDIS_URL: redis://localhost:6379/0
+      # No key: the worker tests use a fake model, and a real one could spend money.
+      ANTHROPIC_API_KEY: ""
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras
+        working-directory: cloud/api
+      - name: lint and types
+        working-directory: cloud/api
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy mcp_audit_cloud
+      - name: tests, including the Postgres-only ones (quota race, RLS)
+        working-directory: cloud/api
+        run: uv run pytest -q -m "not db" && uv run pytest -q -m db
+      - name: migrations apply to an empty database, and roll back
+        working-directory: cloud/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://mcpaudit:mcpaudit@localhost:5432/mcpaudit_test
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud/web
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloud/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: cloud/web/playwright-report/
+          retention-days: 7
+      - name: dependency audit
+        run: npm audit --audit-level=high

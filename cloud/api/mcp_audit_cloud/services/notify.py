@@ -111,8 +111,41 @@ async def owners(db: AsyncSession, org_id: UUID) -> list[str]:
     return [e for e in rows if e]
 
 
+async def org_webhook(db: AsyncSession, org_id: UUID) -> tuple[str | None, str | None, str | None]:
+    """(webhook url, signing secret, slack url) for an org, or three Nones."""
+    from ..models import Org
+
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one_or_none()
+    if org is None:
+        return None, None, None
+    return org.webhook_url, org.webhook_secret, org.slack_webhook_url
+
+
+async def send_slack(url: str, text: str) -> bool:
+    """Slack incoming webhook, plain text.
+
+    Plain text because Slack renders links and mentions, and the text we are relaying
+    came from a server we are auditing for trying to steer a model (invariant 5).
+    """
+    from ..ssrf import SsrfError, guarded_client
+
+    try:
+        client = guarded_client(url, headers={"content-type": "application/json"})
+    except SsrfError as exc:
+        log.info("slack.refused", reason=str(exc))
+        return False
+    try:
+        response = await client.post(url, content=json.dumps({"text": text}).encode())
+        return response.status_code < 300
+    except httpx.HTTPError as exc:
+        log.info("slack.error", error=str(exc)[:120])
+        return False
+    finally:
+        await client.aclose()
+
+
 async def scan_completed(db: AsyncSession, scan: Scan) -> None:
-    """Only worth an email when there is something to act on."""
+    """Only worth telling anyone when there is something to act on."""
     if scan.verdict not in ("CONFIRMED", "SUSPECTED"):
         return
     link = f"{settings().web_base_url}/app/scans/{scan.id}"
@@ -123,6 +156,25 @@ async def scan_completed(db: AsyncSession, scan: Scan) -> None:
             f"A scan finished with the verdict {scan.verdict}.\n\n{link}\n\n"
             "The report shows which tool call diverged and what the sanitized run did instead.",
         )
+
+    url, secret, slack = await org_webhook(db, scan.org_id)
+    if url and secret:
+        # Verdict and link only. The traces are attacker-controlled text and the
+        # customer's own tool inventory; neither belongs in a third party's request log.
+        await send_webhook(
+            url,
+            secret,
+            "scan.completed",
+            {
+                "scan_id": str(scan.id),
+                "verdict": scan.verdict,
+                "trials": scan.trials,
+                "model": scan.model,
+                "url": link,
+            },
+        )
+    if slack:
+        await send_slack(slack, f"mcp-audit: {scan.verdict} — {link}")
 
 
 async def inventory_changed(db: AsyncSession, monitor: Monitor, change: InventoryChange) -> None:
@@ -135,10 +187,12 @@ async def inventory_changed(db: AsyncSession, monitor: Monitor, change: Inventor
             "mcp-audit: a monitored MCP server changed its tool inventory",
             f"{summary}\n\nWe started a scan of the new inventory automatically.\n{link}\n",
         )
-    if monitor.notify_webhook:
+    url, secret, slack = await org_webhook(db, monitor.org_id)
+    destination = monitor.notify_webhook or url
+    if destination and secret:
         await send_webhook(
-            monitor.notify_webhook,
-            settings().billing_webhook_secret or "unset",
+            destination,
+            secret,
             "monitor.changed",
             {
                 "monitor_id": str(monitor.id),
@@ -146,8 +200,11 @@ async def inventory_changed(db: AsyncSession, monitor: Monitor, change: Inventor
                 "new_sha256": change.new_sha256,
                 "scan_id": str(change.scan_id) if change.scan_id else None,
                 "summary": summary,
+                "url": link,
             },
         )
+    if slack:
+        await send_slack(slack, f"mcp-audit: a monitored MCP server changed. {summary} — {link}")
 
 
 def _summarise(diff: dict[str, Any]) -> str:

@@ -146,6 +146,23 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "engine": engine_version()}
 
+    @app.get("/metrics.json", include_in_schema=False)
+    async def metrics_snapshot(request: Request) -> dict[str, Any]:
+        """Operational numbers for the alert rules in metrics.py.
+
+        Behind a shared secret rather than public: queue depth and spend are not customer
+        data, but they are a free read on how busy and how expensive we are.
+        """
+        from .db import sessionmaker
+        from .metrics import snapshot
+
+        expected = cfg.billing_webhook_secret or ""
+        given = request.headers.get("x-metrics-token", "")
+        if cfg.environment != "local" and (not expected or given != expected):
+            raise Problem(404, "not_found", "No such resource.")
+        async with sessionmaker()() as db:
+            return await snapshot(db, ratelimit.redis())
+
     @app.get("/readyz", include_in_schema=False)
     async def readyz() -> dict[str, str]:
         """Ready means the dependencies are reachable, not that the process started."""

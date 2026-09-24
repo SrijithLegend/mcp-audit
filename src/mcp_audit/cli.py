@@ -22,7 +22,7 @@ from .capture.stdio import capture_stdio, parse_env
 from .dryrun import MODES, cast_mode
 from .errors import AuditError, UsageError
 from .harness import CONCURRENCY, DEFAULT_TASK, MODEL, TRIALS, client
-from .models import Inventory
+from .models import Inventory, Report
 from .report import render, to_json, to_markdown, to_sarif
 from .sanitizer import sanitize, stripped_diff
 
@@ -151,6 +151,9 @@ def scan(
     md: Path | None = typer.Option(None, "--md", help="Write a markdown report here"),
     fail_on: str = typer.Option("confirmed", "--fail-on", help="confirmed | suspected"),
     no_escalate: bool = typer.Option(False, "--no-escalate", help="Never run extra trials"),
+    cloud: bool = typer.Option(
+        False, "--cloud", help="Capture locally, run the scan on mcp-audit Cloud (needs `login`)"
+    ),
     debug: bool = typer.Option(False, "--debug", help="Show tracebacks and server stderr"),
 ) -> None:
     """Audit a server: run the same task with and without its prose, diff what the model did."""
@@ -161,6 +164,22 @@ def scan(
             raise UsageError(f"--stub takes one of: {', '.join(MODES)}")
         inventory = _capture(command, args, url, inventory_file, header, env, cwd, debug)
         interactive = sys.stdout.isatty()
+        note = None if as_json else (lambda line: err.print(f"[dim]{line}[/dim]"))
+        if cloud:
+            # Capture happened here, on purpose: reading a stdio server means running it,
+            # and that is never something the Cloud does (invariant 3).
+            from .cloud import scan_in_cloud
+
+            report = scan_in_cloud(
+                inventory,
+                task=None if task == DEFAULT_TASK else task,
+                trials=trials,
+                model=None if model == MODEL else model,
+                stub_mode=stub,
+                progress=note,
+            )
+            _emit(report, as_json, sarif, md)
+            raise typer.Exit(exit_code(report, fail_on))
         report = asyncio.run(
             run_audit(
                 inventory,
@@ -174,7 +193,7 @@ def scan(
                 assume_yes=yes,
                 interactive=interactive,
                 escalate=not no_escalate,
-                progress=None if as_json else (lambda line: err.print(f"[dim]{line}[/dim]")),
+                progress=note,
             )
         )
     except AuditError as exc:
@@ -182,12 +201,17 @@ def scan(
             raise
         _fail(exc)
 
+    _emit(report, as_json, sarif, md)
+    raise typer.Exit(exit_code(report, fail_on))
+
+
+def _emit(report: Report, as_json: bool, sarif: Path | None, md: Path | None) -> None:
+    """Write the requested artefacts, then the report itself."""
     if sarif:
         sarif.write_text(to_sarif(report) + "\n", encoding="utf-8")
     if md:
         md.write_text(to_markdown(report) + "\n", encoding="utf-8")
     print(to_json(report) if as_json else render(report), end="" if as_json else "\n")
-    raise typer.Exit(exit_code(report, fail_on))
 
 
 @app.command(hidden=True)

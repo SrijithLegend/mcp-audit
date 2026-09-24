@@ -153,6 +153,11 @@ class Org(Base, Timestamps):
     plan: Mapped[Plan] = mapped_column(enum_column(Plan, 16), default=Plan.FREE, nullable=False)
     #: Every user gets one of these on first sight, so nothing requires an org setup step.
     personal: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Outbound notifications (ROADMAP Phase 6). The URL is a customer's choice, so it
+    #: goes through the same SSRF guard as a scan target before we ever post to it.
+    webhook_url: Mapped[str | None] = mapped_column(String(2048))
+    webhook_secret: Mapped[str | None] = mapped_column(String(64))
+    slack_webhook_url: Mapped[str | None] = mapped_column(String(2048))
 
     memberships: Mapped[list[Membership]] = relationship(back_populates="org", lazy="selectin")
 
