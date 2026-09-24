@@ -1,0 +1,18 @@
+FROM python:3.12-slim@sha256:af4e85f1cac90dd3771e47292ea7c8a9830abfabbe4faa5c53f158854c2e819d
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+COPY pyproject.toml README.md LICENSE /app/
+COPY src /app/src
+RUN uv pip install --system --no-cache /app
+COPY cloud/api /app/cloud/api
+RUN uv pip install --system --no-cache /app/cloud/api
+
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
+USER 10001
+WORKDIR /app/cloud/api
+
+# Workers have no inbound ports (SECURITY.md §9). All egress goes through the proxy
+# configured by HTTPS_PROXY in production -- the second wall behind ssrf.py.
+CMD ["arq", "mcp_audit_cloud.worker.WorkerSettings"]

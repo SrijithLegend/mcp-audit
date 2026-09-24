@@ -48,6 +48,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_audit"]
+# PEP 561: the engine is mypy --strict clean, so anything importing it gets the types.
+artifacts = ["src/mcp_audit/py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

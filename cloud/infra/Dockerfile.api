@@ -1,0 +1,25 @@
+# Pinned by digest so a rebuild cannot silently pull a different base (SECURITY.md §9).
+FROM python:3.12-slim@sha256:af4e85f1cac90dd3771e47292ea7c8a9830abfabbe4faa5c53f158854c2e819d AS base
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+
+# Engine first: it changes less often than the cloud code, so this layer caches.
+COPY pyproject.toml README.md LICENSE /app/
+COPY src /app/src
+COPY cloud/api/pyproject.toml /app/cloud/api/
+RUN uv pip install --system --no-cache /app && \
+    uv pip install --system --no-cache -r <(uv export --directory /app/cloud/api --format requirements-txt --no-hashes --no-emit-project 2>/dev/null || echo "")
+
+COPY cloud/api /app/cloud/api
+RUN uv pip install --system --no-cache /app/cloud/api
+
+# No shell for an attacker who gets execution, no writes outside /tmp.
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
+USER 10001
+WORKDIR /app/cloud/api
+
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
+CMD ["uvicorn", "mcp_audit_cloud.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
