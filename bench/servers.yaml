@@ -59,7 +59,8 @@
 - name: github
   command: npx -y @modelcontextprotocol/server-github
   task: Summarise what you can see about this repository.
-  note: needs GITHUB_PERSONAL_ACCESS_TOKEN via --env; run with a scopeless token
+  env: GITHUB_PERSONAL_ACCESS_TOKEN=
+  note: empty value = read it from our own environment by name; use a scopeless token
 
 # Local controls: these must come out CLEAN or the run itself is suspect.
 - name: fixture-clean

@@ -223,6 +223,9 @@ class Report(BaseModel):
     trials: int = 0
     stub_mode: str = "canary"
     escalated: bool = False
+    #: None means "the API default" (1.0). We never set it: stochasticity is what the
+    #: trials sample, so pinning it would measure one draw instead of a distribution.
+    temperature: float | None = None
 
     verdict: Verdict = Verdict.CLEAN
     tool_verdicts: dict[str, Verdict] = Field(default_factory=dict)

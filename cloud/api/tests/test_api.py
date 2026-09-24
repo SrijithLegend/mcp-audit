@@ -367,6 +367,33 @@ async def test_unauthenticated_requests_are_401(client):
         assert (await client.get(path)).status_code == 401, path
 
 
+async def test_an_org_can_be_read_and_renamed_by_its_owner(client):
+    headers = auth("org@example.com")
+    me = (await client.get("/v1/me", headers=headers)).json()
+    org_id = me["current_org"]["id"]
+
+    read = await client.get(f"/v1/orgs/{org_id}", headers=headers)
+    assert read.status_code == 200
+    assert read.json()["role"] == "owner"
+
+    renamed = await client.patch(f"/v1/orgs/{org_id}", headers=headers, json={"name": "Acme Security"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Acme Security"
+    # The slug does not move: links and tokens refer to it.
+    assert renamed.json()["slug"] == read.json()["slug"]
+
+
+async def test_another_orgs_record_is_404(client):
+    headers = auth("orgowner@example.com")
+    org_id = (await client.get("/v1/me", headers=headers)).json()["current_org"]["id"]
+    stranger = auth("orgstranger@example.com")
+    assert (await client.get(f"/v1/orgs/{org_id}", headers=stranger)).status_code == 404
+    assert (
+        await client.patch(f"/v1/orgs/{org_id}", headers=stranger, json={"name": "mine now"})
+    ).status_code == 404
+    assert (await client.get(f"/v1/orgs/{org_id}/members", headers=stranger)).status_code == 404
+
+
 async def test_plans_endpoint_is_public_and_matches_the_code(client):
     response = await client.get("/v1/plans")
     assert response.status_code == 200

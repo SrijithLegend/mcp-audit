@@ -111,6 +111,51 @@ async def create_org(
     return OrgOut(id=org.id, name=org.name, slug=org.slug, plan=str(org.plan), personal=False, role="owner")
 
 
+@router.get("/orgs/{org_id}", response_model=OrgOut)
+async def get_org(
+    org_id: UUID,
+    who: Annotated[Principal, Depends(principal)],
+    db: Annotated[AsyncSession, Depends(session)],
+) -> OrgOut:
+    # 404 for an org you are not in: the principal is already fenced to one org, and
+    # whether another exists is not the caller's business.
+    if org_id != who.org_id:
+        raise not_found("organisation")
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one()
+    return OrgOut(
+        id=org.id,
+        name=org.name,
+        slug=org.slug,
+        plan=str(org.plan),
+        personal=org.personal,
+        role=str(who.role),
+    )
+
+
+@router.patch("/orgs/{org_id}", response_model=OrgOut)
+async def update_org(
+    org_id: UUID,
+    body: OrgCreate,
+    who: Annotated[Principal, Depends(principal)],
+    db: Annotated[AsyncSession, Depends(session)],
+) -> OrgOut:
+    """Rename an organisation. The slug does not move: links and tokens refer to it."""
+    if org_id != who.org_id:
+        raise not_found("organisation")
+    who.require(Role.OWNER, Role.ADMIN)
+    org = (await db.execute(select(Org).where(Org.id == org_id))).scalar_one()
+    org.name = body.name
+    await db.flush()
+    return OrgOut(
+        id=org.id,
+        name=org.name,
+        slug=org.slug,
+        plan=str(org.plan),
+        personal=org.personal,
+        role=str(who.role),
+    )
+
+
 @router.get("/orgs/{org_id}/members", response_model=Page[MemberOut])
 async def members(
     org_id: UUID,

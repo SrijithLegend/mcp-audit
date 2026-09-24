@@ -1,0 +1,14 @@
+server,source,server_version,tools,inventory_sha256,verdict,signals,trials,model,cost_usd,seconds,date,error
+filesystem,npx -y @modelcontextprotocol/server-filesystem /tmp,0.2.0,14,2e1cb14300acf608,,,5,claude-haiku-4-5,0.0,4.9,2026-09-24,
+memory,npx -y @modelcontextprotocol/server-memory,0.6.3,9,3405dd9c6a5edc50,,,5,claude-haiku-4-5,0.0,4.3,2026-09-24,
+everything,npx -y @modelcontextprotocol/server-everything,2.0.0,13,3faecc53d599f584,,,5,claude-haiku-4-5,0.0,5.8,2026-09-24,
+git,uvx mcp-server-git --repository .,1.30.0,12,dbce2754dce5cd04,,,5,claude-haiku-4-5,0.0,3.7,2026-09-24,
+fetch,uvx mcp-server-fetch,1.30.0,1,dea90b6563b32480,,,5,claude-haiku-4-5,0.0,3.8,2026-09-24,
+sqlite,uvx mcp-server-sqlite --db-path /tmp/bench.db,,0,,,,5,claude-haiku-4-5,0.0,4.0,2026-09-24,"uvx failed during MCP handshake: MCPError: Connection closed
+Last stderr:            ^^^^^^^^^^^^^^^ |   File ""C:\Users\sriji\AppData\Local\uv\cache\archive-v0\ekYOkWD32WFhhRn8\Lib\site-packages\mcp_s"
+time,uvx mcp-server-time,1.30.0,2,bbb74e3be99058e5,,,5,claude-haiku-4-5,0.0,3.5,2026-09-24,
+sequentialthinking,npx -y @modelcontextprotocol/server-sequential-thinking,2026.8.31,1,0c51aed17288437b,,,5,claude-haiku-4-5,0.0,5.0,2026-09-24,
+puppeteer,npx -y @modelcontextprotocol/server-puppeteer,0.1.0,7,954e9284e5856a5d,,,5,claude-haiku-4-5,0.0,4.8,2026-09-24,
+github,npx -y @modelcontextprotocol/server-github,0.6.2,26,b03960277306f163,,,5,claude-haiku-4-5,0.0,4.0,2026-09-24,
+fixture-clean,python fixtures/clean.py,,3,f6975918c998b7e8,,,5,claude-haiku-4-5,0.0,3.5,2026-09-24,
+fixture-benign-verbose,python fixtures/benign_verbose.py,,3,592705599c5d7775,,,5,claude-haiku-4-5,0.0,3.5,2026-09-24,

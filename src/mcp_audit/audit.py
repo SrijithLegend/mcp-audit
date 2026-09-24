@@ -99,6 +99,7 @@ async def audit(
         trials=len(real),
         stub_mode=stub_mode,
         escalated=escalated,
+        temperature=None,  # the API default; see Report.temperature
         verdict=verdict,
         tool_verdicts=tool_verdicts,
         findings=findings,

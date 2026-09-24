@@ -16,11 +16,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import dataclasses
 import json
 import shlex
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,14 +59,35 @@ class Target:
     url: str = ""
     task: str = ""
     note: str = ""
-    env: list[str] = field(default_factory=list)
+    #: "K=V;K2=V2" in the yaml. Read from *our* environment by name when the value is
+    #: empty ("GITHUB_PERSONAL_ACCESS_TOKEN="), so a token never lands in a committed
+    #: file. Nothing else is inherited (CLAUDE.md invariant 4).
+    env: str = ""
+
+    def env_pairs(self) -> dict[str, str]:
+        import os
+
+        out: dict[str, str] = {}
+        for item in self.env.split(";"):
+            if not item.strip():
+                continue
+            key, _, value = item.partition("=")
+            resolved = value or os.environ.get(key.strip(), "")
+            if resolved:
+                out[key.strip()] = resolved
+        return out
 
 
 def load_targets(path: Path) -> list[Target]:
     """A 20-line loader instead of a yaml dependency (decision D2).
 
-    Understands exactly the subset servers.yaml uses: a list of `- key: value` blocks.
+    Understands exactly the subset servers.yaml uses: a list of `- key: value` blocks,
+    one line per key. Unknown keys are ignored rather than fatal -- a typo in a comment
+    field should not stop a benchmark run -- and anything fancier than this (folded
+    scalars, nesting) is not supported on purpose. If the file ever needs it, take the
+    yaml dependency in bench/ only; the engine still must not have one.
     """
+    fields = {f.name for f in dataclasses.fields(Target)}
     targets: list[Target] = []
     current: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -74,13 +96,14 @@ def load_targets(path: Path) -> list[Target]:
             continue
         if line.startswith("- "):
             if current:
-                targets.append(Target(**current))  # type: ignore[arg-type]
+                targets.append(Target(**current))
             current = {}
             line = "  " + line[2:]
         key, _, value = line.strip().partition(":")
-        current[key.strip()] = value.strip().strip('"')
+        if key.strip() in fields:
+            current[key.strip()] = value.strip().strip('"')
     if current:
-        targets.append(Target(**current))  # type: ignore[arg-type]
+        targets.append(Target(**current))
     return targets
 
 
@@ -88,7 +111,7 @@ async def capture(target: Target):
     if target.url:
         return await capture_http(target.url)
     argv = shlex.split(target.command)
-    inventory, _ = await capture_stdio(argv[0], argv[1:], timeout=60.0)
+    inventory, _ = await capture_stdio(argv[0], argv[1:], env=target.env_pairs(), timeout=60.0)
     return inventory
 
 
