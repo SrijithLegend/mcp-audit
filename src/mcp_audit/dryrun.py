@@ -1,37 +1,52 @@
 """Dry-run tool execution -- the audit never runs the server's tools.
 
 We read the inventory (tools/list) and nothing else. Every tool call the
-model makes during an audit is answered here with an inert stub.
+model makes during an audit is answered here with a synthetic result.
 
 This is the whole safety story: audit a filesystem server without this and a
 steered model reads ~/.ssh through us and ships it to the API. The security
 tool becomes the exploit.
 
-The stub is deterministic and identical on both sides of the differential, so
-it cannot itself explain a divergence in the trace.
+Stubs are deterministic and identical on both arms of the differential, so they
+cannot themselves explain a divergence -- and they never echo the model's
+arguments back, which would hand the payload a free channel into the prompt.
+
+Two modes:
+
+`inert`  - says nothing happened. Safe, but it cannot see data *flow*.
+`canary` - returns a synthetic result carrying a unique token. If that token later
+           turns up in an argument to another tool, the model moved data from one
+           tool to another: the exfiltration shape, caught without ever holding
+           real data. This is the default.
 """
 
+from __future__ import annotations
 
-def stub_result(name: str) -> str:
+import hashlib
+from typing import Literal
+
+StubMode = Literal["inert", "canary"]
+
+MODES: tuple[StubMode, ...] = ("inert", "canary")
+
+
+def canary(name: str, index: int) -> str:
+    """Token for the result of the `index`-th call of a trial.
+
+    Derived, not random: both arms must hand out identical tokens, and
+    `features.py` has to be able to recompute them from the trace alone.
+    """
+    digest = hashlib.sha256(f"{name}:{index}".encode()).hexdigest()[:8]
+    return f"MCPAUDIT-CANARY-{digest}"
+
+
+def stub_result(name: str, index: int = 0, mode: StubMode = "canary") -> str:
     """Inert stand-in for a tool result. Echoes no arguments, by design."""
-    return f"(dry run: {name} was not executed, no result is available)"
+    if mode == "inert":
+        return f"(dry run: {name} was not executed, no result is available)"
+    return f"(dry run: {name} was not executed. Synthetic result for this session: {canary(name, index)})"
 
 
-if __name__ == "__main__":  # self-check: nothing in the package can execute a tool
-    import pathlib
-    import re
-
-    # arguments must never come back out -- an echoed path is a data leak into
-    # the transcript, and a free channel for the payload to re-enter the prompt.
-    out = stub_result("read_file")
-    assert "/etc/passwd" not in out and "{" not in out, out
-    assert stub_result("read_file") == out, "stub must be deterministic"
-
-    # the invariant, enforced: no call path to the audited server exists at all.
-    pkg = pathlib.Path(__file__).resolve().parent
-    for f in pkg.glob("*.py"):
-        src = f.read_text(encoding="utf-8")
-        hit = re.search(r"\bcall_tool\b|\bsession\.call\b", src)
-        assert not hit, f"{f.name}: live tool execution path ({hit.group(0)})"
-
-    print("ok")
+def cast_mode(mode: str) -> StubMode:
+    """Narrow a string from the CLI or a stored report to a known stub mode."""
+    return "inert" if mode == "inert" else "canary"

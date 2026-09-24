@@ -1,7 +1,47 @@
+"""Strip the prose, keep the call surface. The sanitized arm of the differential.
+
+What survives has to be enough for the model to form a *valid* call and nothing
+more. If we strip something structural, the sanitized arm fails for a reason
+that has nothing to do with injected text and the whole comparison is void.
+"""
+
+from __future__ import annotations
+
+import difflib
+import json
+from typing import Any
+
+from .models import Inventory, Tool
+
 # JSON Schema keywords whose values are themselves schemas (or maps/lists of schemas).
-_SUBSCHEMA = ("items", "additionalProperties", "contains", "if", "then", "else", "not")
-_SUBSCHEMA_MAP = ("properties", "patternProperties", "$defs", "definitions")
+# Every applicator has to be walked or prose hides inside it: `unevaluatedProperties`
+# and `contentSchema` are as good a hiding place as `description` is.
+_SUBSCHEMA = (
+    "items",
+    "additionalItems",
+    "additionalProperties",
+    "contains",
+    "if",
+    "then",
+    "else",
+    "not",
+    "propertyNames",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+    "contentSchema",
+)
+_SUBSCHEMA_MAP = (
+    "properties",
+    "patternProperties",
+    "$defs",
+    "definitions",
+    "dependentSchemas",
+)
 _SUBSCHEMA_LIST = ("anyOf", "oneOf", "allOf", "prefixItems")
+
+# draft-07 `dependencies` is either {name: schema} or {name: [names]}. The first is a
+# schema and can hide prose; the second is structural and must survive untouched.
+_SUBSCHEMA_AMBIGUOUS = ("dependencies",)
 
 # Free-text keywords the model reads but that constrain nothing about validity.
 # `default` belongs here: it is a pure annotation, so it carries prose without
@@ -11,99 +51,81 @@ _SUBSCHEMA_LIST = ("anyOf", "oneOf", "allOf", "prefixItems")
 _PROSE = ("description", "title", "examples", "$comment", "deprecated", "default")
 
 
-def sanitize(inventory: dict) -> dict:
-    """Strip prose from descriptions, keep only structural facts."""
-    return {
-        "instructions": "",  # server instructions are pure prose -- drop them entirely
-        "tools": [
-            {
-                "name": t["name"],
-                "description": _minimal(t),
-                "input_schema": _strip_schema(t["input_schema"]),
-            }
-            for t in inventory["tools"]
-        ]
-    }
+def sanitize(inventory: Inventory) -> Inventory:
+    """The sanitized arm: same tools, same parameters, no author prose."""
+    return inventory.model_copy(
+        update={
+            # server instructions are pure prose -- drop them entirely
+            "instructions": "",
+            "tools": [
+                Tool(
+                    name=t.name,
+                    description=_minimal(t),
+                    input_schema=strip_schema(t.input_schema),
+                )
+                for t in inventory.tools
+            ],
+        }
+    )
 
 
-def _minimal(tool: dict) -> str:
-    params = list((tool.get("input_schema") or {}).get("properties", {}).keys())
-    return f"Tool: {tool['name']}. Parameters: {', '.join(params) or 'none'}."
+def _minimal(tool: Tool) -> str:
+    """A description can't be empty (some models ignore such a tool), so we
+    generate one that states only what the schema already says."""
+    params = ", ".join(tool.param_names()) or "none"
+    return f"Tool: {tool.name}. Parameters: {params}."
 
 
-def _strip_schema(schema):
-    """Recursively drop author prose (description/title) from a JSON Schema.
+def strip_schema(schema: Any) -> Any:
+    """Recursively drop author prose from a JSON Schema.
 
     Walks only the keywords whose values are schemas, so a parameter literally
     named "description" or "title" survives -- a blind key-delete would eat it.
+    Local `$ref` is left alone (resolving it would duplicate `$defs` into the
+    call surface) and remote `$ref` is never fetched.
     """
     if not isinstance(schema, dict):
         return schema
-    out = {
-        k: v
-        for k, v in schema.items()
-        if k not in _PROSE and not k.startswith("x-")
-    }
+    out: dict[str, Any] = {k: v for k, v in schema.items() if k not in _PROSE and not k.startswith("x-")}
     for k in _SUBSCHEMA:
         v = out.get(k)
         if isinstance(v, dict):
-            out[k] = _strip_schema(v)
+            out[k] = strip_schema(v)
         elif isinstance(v, list):  # draft-07 tuple form: "items": [schema, schema]
-            out[k] = [_strip_schema(e) for e in v]
+            out[k] = [strip_schema(e) for e in v]
     for k in _SUBSCHEMA_MAP:
         if isinstance(out.get(k), dict):
-            out[k] = {n: _strip_schema(s) for n, s in out[k].items()}
+            out[k] = {n: strip_schema(s) for n, s in out[k].items()}
     for k in _SUBSCHEMA_LIST:
         if isinstance(out.get(k), list):
-            out[k] = [_strip_schema(s) for s in out[k]]
+            out[k] = [strip_schema(s) for s in out[k]]
+    for k in _SUBSCHEMA_AMBIGUOUS:
+        if isinstance(out.get(k), dict):
+            out[k] = {n: (s if isinstance(s, list) else strip_schema(s)) for n, s in out[k].items()}
     return out
 
 
-if __name__ == "__main__":  # self-check: prose gone at every depth, call surface intact
-    import json
-    import pathlib
+def stripped_diff(real: Inventory, sanitized: Inventory) -> str:
+    """Unified diff of what sanitization removed -- the honest half of the claim.
 
-    sample = pathlib.Path(__file__).resolve().parents[2] / "samples" / "filesystem.json"
-    raw = json.loads(sample.read_text())
-    clean = sanitize(raw)
+    Users should be able to see exactly what we took away before they believe a
+    verdict built on its absence. Attacker-controlled text: display as text only.
+    """
+    return "\n".join(
+        difflib.unified_diff(
+            _dump(real).splitlines(),
+            _dump(sanitized).splitlines(),
+            fromfile="real",
+            tofile="sanitized",
+            lineterm="",
+            n=1,
+        )
+    )
 
-    assert [t["name"] for t in clean["tools"]] == [t["name"] for t in raw["tools"]]
-    assert not any("DEPRECATED" in t["description"] for t in clean["tools"]), "top-level prose survived"
-    assert "description" not in json.dumps(clean["tools"][0]["input_schema"]), "nested prose survived"
 
-    # required params must survive stripping, in order
-    for c, r in zip(clean["tools"], raw["tools"]):
-        assert c["input_schema"].get("required") == r["input_schema"].get("required"), c["name"]
-        assert list(c["input_schema"].get("properties", {})) == list(r["input_schema"].get("properties", {}))
-
-    # a param NAMED description/title must not be deleted, but its own prose must be
-    tricky = {
-        "type": "object",
-        "description": "prose",
-        "examples": ["prose"],
-        "$comment": "prose",
-        "x-vendor-hint": "prose",
-        "properties": {
-            "description": {"type": "string", "description": "prose"},
-            "title": {"type": "string"},
-            "items": {"type": "array", "items": {"type": "string", "description": "prose"}},
-            "who": {"anyOf": [{"type": "string", "description": "prose"}, {"type": "null"}]},
-        },
+def _dump(inv: Inventory) -> str:
+    payload = {
+        "instructions": inv.instructions,
+        "tools": [t.model_dump(mode="json") for t in inv.tools],
     }
-    got = _strip_schema(tricky)
-    assert sorted(got["properties"]) == ["description", "items", "title", "who"], got
-    assert got["properties"]["description"] == {"type": "string"}, got
-    assert got["properties"]["items"]["items"] == {"type": "string"}, got
-    assert got["properties"]["who"]["anyOf"][0] == {"type": "string"}, got
-    assert "description" not in got
-    assert not any(k in got for k in ("examples", "$comment", "x-vendor-hint")), got
-
-    # constraints the model needs to form a valid call must survive
-    keep = _strip_schema({"enum": [1, 2], "const": 3, "default": 1, "description": "prose"})
-    assert keep == {"enum": [1, 2], "const": 3}, keep
-
-    # draft-07 tuple form: prose inside a LIST at "items" must also go
-    tup = _strip_schema({"items": [{"type": "string", "description": "prose"}]})
-    assert tup == {"items": [{"type": "string"}]}, tup
-
-    print("ok")
+    return json.dumps(payload, indent=1, sort_keys=True, ensure_ascii=False)

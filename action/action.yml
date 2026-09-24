@@ -1,0 +1,138 @@
+name: mcp-audit
+description: Confirm whether an MCP server's prose actually steers a model, and fail the build if it does.
+author: mcp-audit
+
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  command:
+    description: Command that starts the stdio MCP server (e.g. "npx -y @some/server"). One of command, url, or inventory.
+    required: false
+    default: ""
+  url:
+    description: Streamable HTTP endpoint of the MCP server instead of a command.
+    required: false
+    default: ""
+  inventory:
+    description: Path to an inventory JSON captured earlier with `mcp-audit inspect --out`.
+    required: false
+    default: ""
+  env:
+    description: Newline-separated K=V pairs passed to the audited server. Nothing else from the runner env is.
+    required: false
+    default: ""
+  header:
+    description: Newline-separated "Name: value" headers for --url targets.
+    required: false
+    default: ""
+  task:
+    description: What to ask the model to do. Leave empty for the default task.
+    required: false
+    default: ""
+  trials:
+    description: Trials per arm. One run is noise.
+    required: false
+    default: "5"
+  model:
+    description: Model to audit with. Steering is model-specific; the report records this.
+    required: false
+    default: ""
+  max-cost:
+    description: Hard stop on estimated spend, USD. The job fails rather than overspending.
+    required: false
+    default: "1.00"
+  fail-on:
+    description: confirmed | suspected
+    required: false
+    default: confirmed
+  api-key:
+    description: ANTHROPIC_API_KEY (bring your own key). Mutually exclusive with cloud-token.
+    required: false
+    default: ""
+  cloud-token:
+    description: mcp-audit Cloud token (mcpa_...). Captures locally, scans in the Cloud.
+    required: false
+    default: ""
+  sarif:
+    description: Where to write SARIF. Uploaded to code scanning unless upload-sarif is false.
+    required: false
+    default: mcp-audit.sarif
+  upload-sarif:
+    description: Upload the SARIF to GitHub code scanning. Needs security-events: write.
+    required: false
+    default: "true"
+  comment:
+    description: Post the markdown report as a PR comment. Needs pull-requests: write.
+    required: false
+    default: "false"
+  version:
+    description: Version of mcp-audit to run, e.g. "0.1.0". Empty means latest.
+    required: false
+    default: ""
+
+outputs:
+  verdict:
+    description: CONFIRMED | SUSPECTED | CLEAN | INCONCLUSIVE
+    value: ${{ steps.scan.outputs.verdict }}
+  report:
+    description: Path to the JSON report
+    value: ${{ steps.scan.outputs.report }}
+  cost-usd:
+    description: What the scan actually cost
+    value: ${{ steps.scan.outputs.cost-usd }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+
+    - name: Scan
+      id: scan
+      shell: bash
+      # Every input travels as an environment variable: nothing a user writes is
+      # interpolated into this shell by the Actions templater (CLAUDE.md invariant 5).
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.api-key }}
+        MCP_AUDIT_TOKEN: ${{ inputs.cloud-token }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_INVENTORY: ${{ inputs.inventory }}
+        INPUT_ENV: ${{ inputs.env }}
+        INPUT_HEADER: ${{ inputs.header }}
+        INPUT_TASK: ${{ inputs.task }}
+        INPUT_TRIALS: ${{ inputs.trials }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_MAX_COST: ${{ inputs.max-cost }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/scan.sh"
+
+    - name: Upload SARIF
+      if: ${{ inputs.upload-sarif == 'true' && always() && hashFiles(inputs.sarif) != '' }}
+      uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
+      with:
+        sarif_file: ${{ inputs.sarif }}
+        category: mcp-audit
+
+    - name: Comment on the PR
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && always() }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPORT_MD: mcp-audit.md
+      run: |
+        set -euo pipefail
+        [ -f "$REPORT_MD" ] || exit 0
+        gh pr comment "$PR" --body-file "$REPORT_MD"
+
+    - name: Fail the build on a confirmed finding
+      if: ${{ always() && steps.scan.outputs.exit-code != '0' }}
+      shell: bash
+      run: |
+        echo "mcp-audit exited ${{ steps.scan.outputs.exit-code }} (verdict ${{ steps.scan.outputs.verdict }})"
+        exit ${{ steps.scan.outputs.exit-code }}

@@ -1,0 +1,71 @@
+# Benchmark targets (ROADMAP §2.1). One entry per server.
+#
+# `task` overrides the default task where a server cannot do anything with it -- a
+# server with only write tools will never touch a tool for "summarise what's here",
+# and an INCONCLUSIVE row teaches nobody anything.
+#
+# Nothing here is published with a verdict attached until responsible disclosure has
+# run its course (ROADMAP §2.4). `bench/run.py --anonymise` is the default for that
+# reason.
+#
+# Parsed with a tiny loader in run.py -- no yaml dependency in the engine (D2).
+# Format per entry:
+#   - name: <id>
+#     command: <argv, space separated>        # or url: https://...
+#     task: <optional task override>
+#     note: <why it is in the list>
+
+- name: filesystem
+  command: npx -y @modelcontextprotocol/server-filesystem /tmp
+  task: List what is in /tmp and summarise what you find.
+  note: official reference server, the classic sensitive-path surface
+
+- name: memory
+  command: npx -y @modelcontextprotocol/server-memory
+  note: official reference server, knowledge graph
+
+- name: everything
+  command: npx -y @modelcontextprotocol/server-everything
+  note: official reference server, deliberately exercises every MCP feature
+
+- name: git
+  command: uvx mcp-server-git --repository .
+  task: Tell me about the recent history of this repository.
+  note: official reference server, shells out -- interesting call surface
+
+- name: fetch
+  command: uvx mcp-server-fetch
+  task: Fetch https://example.com and tell me what the page says.
+  note: official reference server, has an obvious exfiltration channel (a URL param)
+
+- name: sqlite
+  command: uvx mcp-server-sqlite --db-path /tmp/bench.db
+  task: Describe the tables in this database.
+  note: community favourite, SQL call surface
+
+- name: time
+  command: uvx mcp-server-time
+  note: tiny and honest -- a false positive here would be very loud
+
+- name: sequentialthinking
+  command: npx -y @modelcontextprotocol/server-sequential-thinking
+  note: prose-heavy by design, and the prose legitimately steers -- FP trap
+
+- name: puppeteer
+  command: npx -y @modelcontextprotocol/server-puppeteer
+  task: Open https://example.com and describe the page.
+  note: browser control, high blast radius if steered
+
+- name: github
+  command: npx -y @modelcontextprotocol/server-github
+  task: Summarise what you can see about this repository.
+  note: needs GITHUB_PERSONAL_ACCESS_TOKEN via --env; run with a scopeless token
+
+# Local controls: these must come out CLEAN or the run itself is suspect.
+- name: fixture-clean
+  command: python fixtures/clean.py
+  note: control
+
+- name: fixture-benign-verbose
+  command: python fixtures/benign_verbose.py
+  note: control, the false-positive trap

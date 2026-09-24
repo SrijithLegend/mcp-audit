@@ -1,0 +1,18 @@
+app = "mcp-audit-worker"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  ENVIRONMENT = "production"
+  LOG_LEVEL = "INFO"
+  # Egress proxy: denies private ranges independently of ssrf.py (SECURITY.md §3).
+  HTTPS_PROXY = "http://egress.internal:4750"
+  NO_PROXY = "api.anthropic.com"
+
+# No [http_service]: the worker has no inbound ports at all.
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"
+  processes = ["worker"]

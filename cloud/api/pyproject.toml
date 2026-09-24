@@ -1,0 +1,73 @@
+[project]
+name = "mcp-audit-cloud"
+version = "0.1.0"
+description = "Hosted mcp-audit: scans, history, rug-pull monitoring, teams"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    # the engine itself, unchanged -- a hosted verdict is the CLI's verdict
+    "mcp-audit",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic-settings>=2.6",
+    "arq>=0.26",
+    "redis>=5.2",
+    "httpx2>=2",
+    "pyjwt[crypto]>=2.10",     # Clerk JWT verification via JWKS (D8)
+    "structlog>=24.4",
+    "cryptography>=44",        # AES-GCM for remote-target header values (§4)
+    "sentry-sdk[fastapi]>=2.19",
+    "uuid7>=0.1",              # time-ordered PKs: index locality without a custom impl
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "httpx2>=2",
+    "ruff>=0.14",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_audit_cloud"]
+
+[tool.uv.sources]
+mcp-audit = { path = "../..", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "db: needs the local postgres + redis from cloud/infra/docker-compose.yml",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["mcp_audit_cloud"]
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["arq.*", "uuid7.*", "uuid_extensions.*"]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+]
