@@ -357,49 +357,43 @@ violations in console on any page.
 ### 5.1 Plans (config in `cloud/api/.../plans.py`, single source of truth, mirrored to
 the pricing page via API `GET /v1/plans`)
 
-**Plans include dollars of model time, not a flat scan count.** A scan is not a fixed-cost
-unit -- a 26-tool server at 10 trials per arm costs many times a 3-tool server at 5 -- so a
-scan count bounds nothing, and a plan priced on one loses money the first time somebody
-points it at a big server. The budget is enforced per period in `services/quota.py`, and the
-advertised scan count is *derived* from it, so the two cannot disagree.
+**We do not pay for inference and we do not resell it.** Scans run on the user's own
+Anthropic key, on their machine or in their CI, and the Cloud ingests the finished report
+(invariant 3'). So none of the numbers below protect a margin: they bound our database,
+queue and bandwidth, and they mark the line between the free trial and the paid product.
 
-| | Free | Pro | Team |
-|---|---|---|---|
-| Price | $0 | $19/mo ($190/yr) | $79/mo ($790/yr) |
-| **Included model time / mo** | **$0.30** | **$5.00** | **$22.00** |
-| ~ scans at $0.06/scan | 5 | 83 | 366 |
-| Max cost per scan | $0.10 | $0.50 | $1.00 |
-| Worst-case margin | (marketing cost) | $12.86 | $52.26 |
-| Max trials / arm | 5 | 10 | 20 |
-| Remote HTTP targets | 1 | 20 | 100 |
-| Monitors | - | 10, daily | 100, hourly |
-| History retention | 7 days | 1 year | 2 years |
-| API tokens / CI | 1 | 10 | 50 |
-| Seats | 1 | 1 | 10 (+$8/seat) |
-| Share links, SARIF | yes | yes | yes |
+| | Free | Pro |
+|---|---|---|
+| Price | $0 | $19/mo ($190/yr) |
+| **Model cost** | **theirs, direct to Anthropic** | **theirs, direct to Anthropic** |
+| Reports kept / mo | 5 | 500 |
+| Servers tracked | 3 | 100 |
+| Max trials / arm accepted | 5 | 20 |
+| Rug-pull monitors | - | 25, hourly |
+| History retention | 7 days | 1 year |
+| API tokens / CI | 1 | 10 |
+| Custom scan task | - | yes |
+| Share links, SARIF | yes | yes |
 
-Budgets are 30 % of net revenue after the MoR fee, which is the rule this section always
-stated. The property that follows: **the margin does not depend on the cost estimate being
-right.** `ESTIMATED_COST_PER_SCAN_USD` (provisionally $0.06, deliberately pessimistic) only
-decides how many scans a budget buys. If Gate 1 measures $0.12, customers get half as many
-scans and we keep the same margin -- we never get a bill.
+Team ($79, 10 seats) is built and kept in code with `listed=False` (D13). It is not
+advertised, because seats are worth selling the day somebody asks rather than before.
 
-Also bounded, because each of these was a way for hosted scanning to cost us money for
-nothing:
+What the $19 buys is everything a local CLI cannot do: history you can diff, monitoring
+that runs while you sleep, share links, SARIF in code scanning, and a team that can see all
+of it. The verdict itself is free and unlimited, forever, because it is the open-source CLI.
 
-- **Monitor auto-scans take a reservation** like any other scan. They used to bypass quota
-  entirely, which made ten daily monitors about 300 free scans a month.
-- **The per-scan ceiling comes from the plan**, clamped to what is left of the budget. The
-  worker used the global ceiling, so a Free scan could cost 10x what Free says it may.
-- **Free organisations per account are capped** (`MAX_FREE_ORGS_PER_USER`), or "free per
-  org" means "free per org somebody bothers to create".
-- **The global daily breaker** (`DAILY_SPEND_LIMIT_USD`, default $25) bounds everything
-  together: total monthly exposure is at most about $750 whatever the customer mix does, and
-  it fails closed.
+**Why not bundle tokens and mark them up.** Two reasons, both worth writing down:
 
-Prices remain Srijith's to set. What is no longer negotiable is that a plan's budget stays
-under 30 % of its net revenue: `plans.margin_ok()` and `tests/test_economics.py` fail the
-build otherwise.
+1. Holding a customer's Anthropic key would make a breach of our database a breach of their
+   billing account. A security product should not create that risk to save a config line.
+2. Bundling means metering, and metering means a customer with a 26-tool server running
+   20-trial audits becomes someone we discourage rather than someone we serve. Our incentive
+   should never be "please scan less".
+
+The practical consequence for pricing: a limit being wrong costs us disk, not money, so
+these numbers can be set by what the infrastructure takes rather than by an Anthropic bill.
+`tests/test_economics.py` proves the zero by grep, and `plans.py` has no cost field to
+forget to check.
 
 ### 5.2 Implementation
 - `BillingProvider` protocol: `create_checkout(org, plan, interval) -> url`,

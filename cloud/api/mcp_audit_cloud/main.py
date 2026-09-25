@@ -16,8 +16,8 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from mcp_audit.audit import engine_version
 from mcp_audit.errors import CaptureError
+from mcp_audit.meta import engine_version
 
 from . import queue, ratelimit
 from .config import settings

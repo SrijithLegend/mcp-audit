@@ -1,6 +1,8 @@
-"""`scan --cloud`: capture locally, scan remotely, get the same Report back.
+"""`scan --push`: the audit runs here, the report goes there.
 
-Stubbed at the transport, so this asserts the contract with our own API without a server.
+The key never leaves this machine, so there is nothing to poll and nothing to wait for.
+These tests pin the contract with our own API and, more importantly, pin what does *not*
+cross the wire.
 """
 
 from __future__ import annotations
@@ -11,8 +13,8 @@ from typing import Any
 import httpx2 as httpx
 import pytest
 
-from mcp_audit.cloud import scan_in_cloud
-from mcp_audit.errors import ApiError, AuditError
+from mcp_audit.cloud import push_report
+from mcp_audit.errors import ApiError
 from mcp_audit.models import Inventory, Report, Tool, Verdict
 
 INVENTORY = Inventory(
@@ -21,34 +23,23 @@ INVENTORY = Inventory(
     source="stdio: python fixtures/poisoned_instructions.py",
 )
 
-REPORT = {
-    "format": "mcp-audit/report@1",
-    "engine_version": "0.1.0",
-    "verdict": "CONFIRMED",
-    "model": "claude-haiku-4-5",
-    "trials": 5,
-    "findings": [],
-    "traces": [],
-    "usage": {"cost_usd": 0.03, "api_calls": 25},
-}
+REPORT = Report(
+    engine_version="0.1.0",
+    verdict=Verdict.CONFIRMED,
+    model="claude-haiku-4-5",
+    trials=5,
+    inventory_sha256=INVENTORY.sha256(),
+    target=INVENTORY.source,
+)
 
 
-def transport(*responses: tuple[int, dict[str, Any]], record: list[httpx.Request] | None = None):
-    """Answers each request with the next scripted response."""
-    queue = list(responses)
-
+def patched(monkeypatch, status: int, body: dict[str, Any], record: list[httpx.Request] | None = None):
     def handler(request: httpx.Request) -> httpx.Response:
         if record is not None:
             record.append(request)
-        status, body = queue.pop(0) if queue else (200, {})
         return httpx.Response(status, json=body)
 
-    return httpx.MockTransport(handler)
-
-
-def patched(monkeypatch, *responses, record=None) -> None:
-    """Make httpx.Client use our transport wherever cloud.py constructs one."""
-    mock = transport(*responses, record=record)
+    mock = httpx.MockTransport(handler)
     original = httpx.Client.__init__
 
     def init(self, *args: Any, **kwargs: Any) -> None:
@@ -56,110 +47,87 @@ def patched(monkeypatch, *responses, record=None) -> None:
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(httpx.Client, "__init__", init)
-    monkeypatch.setattr("mcp_audit.cloud.POLL_SECONDS", 0.0)
 
 
-def test_a_cloud_scan_uploads_the_inventory_and_returns_the_report(monkeypatch):
+def test_pushing_uploads_the_finished_report(monkeypatch):
     seen: list[httpx.Request] = []
-    patched(
-        monkeypatch,
-        (202, {"id": "s1", "status": "queued"}),
-        (200, {"id": "s1", "status": "running"}),
-        (200, {"id": "s1", "status": "succeeded", "verdict": "CONFIRMED"}),
-        (200, REPORT),
-        record=seen,
-    )
-    report = scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example")
+    patched(monkeypatch, 201, {"id": "s1", "verdict": "CONFIRMED"}, record=seen)
 
-    assert isinstance(report, Report)
-    assert report.verdict is Verdict.CONFIRMED
+    url = push_report(REPORT, inventory=INVENTORY, token="mcpa_test", base="https://api.example")
 
-    submit = seen[0]
-    body = json.loads(submit.content)
-    assert submit.method == "POST"
-    assert str(submit.url).endswith("/v1/scans")
-    assert submit.headers["authorization"] == "Bearer mcpa_test"
-    # A retried submit must not cost a second scan.
-    assert submit.headers["idempotency-key"]
+    assert "s1" in url
+    request = seen[0]
+    assert request.method == "POST"
+    assert str(request.url).endswith("/v1/scans")
+    assert request.headers["authorization"] == "Bearer mcpa_test"
+    # A retried upload must not store the report twice.
+    assert request.headers["idempotency-key"]
+
+    body = json.loads(request.content)
+    assert body["report"]["verdict"] == "CONFIRMED"
     assert body["inventory"]["tools"][0]["name"] == "read_file"
-    assert body["stub_mode"] == "canary"
-    # The inventory goes up. Nothing else does -- no command, no environment, no key.
-    assert set(body) <= {"inventory", "stub_mode", "task", "trials", "model"}
+    assert set(body) <= {"report", "inventory", "target_id"}
 
 
-def test_default_task_and_model_are_not_sent(monkeypatch):
-    """Let the server apply its own defaults; sending ours would pin them silently."""
+def test_no_key_and_no_task_ever_cross_the_wire(monkeypatch):
+    """The whole point of this architecture: the model credential stays local."""
     seen: list[httpx.Request] = []
-    patched(
-        monkeypatch,
-        (202, {"id": "s1", "status": "succeeded"}),
-        (200, REPORT),
-        record=seen,
-    )
-    scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example")
-    body = json.loads(seen[0].content)
-    assert "task" not in body and "model" not in body
+    patched(monkeypatch, 201, {"id": "s1"}, record=seen)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-value")
+
+    push_report(REPORT, inventory=INVENTORY, token="mcpa_test", base="https://api.example")
+
+    payload = seen[0].content.decode()
+    assert "sk-ant" not in payload
+    assert "ANTHROPIC" not in payload
+    assert "sk-ant" not in str(dict(seen[0].headers))
+
+
+def test_the_inventory_is_optional(monkeypatch):
+    """Without it the report still uploads; the report carries its own hash."""
+    seen: list[httpx.Request] = []
+    patched(monkeypatch, 201, {"id": "s1"}, record=seen)
+    push_report(REPORT, token="mcpa_test", base="https://api.example")
+    assert "inventory" not in json.loads(seen[0].content)
 
 
 def test_no_token_is_an_actionable_error(monkeypatch):
     monkeypatch.setattr("mcp_audit.cloud.load", lambda: None)
     with pytest.raises(ApiError, match="mcp-audit login"):
-        scan_in_cloud(INVENTORY, base="https://api.example")
+        push_report(REPORT, base="https://api.example")
 
 
-def test_quota_exhaustion_points_at_the_free_path(monkeypatch):
+def test_a_refused_upload_says_the_scan_still_ran(monkeypatch):
+    """The audit already happened locally. Losing the upload is not losing the result."""
     patched(
         monkeypatch,
-        (
-            402,
-            {
-                "type": "https://mcpaudit.dev/problems/quota_exceeded",
-                "detail": "This organisation has used 10 of 10 scans this period.",
-                "upgrade_url": "https://mcpaudit.dev/pricing",
-            },
-        ),
+        402,
+        {
+            "type": "https://mcpaudit.dev/problems/limit_reached",
+            "detail": "This organisation has stored 5 of 5 reports this period.",
+            "upgrade_url": "https://mcpaudit.dev/pricing",
+        },
     )
     with pytest.raises(ApiError) as exc:
-        scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example")
-    assert "10 of 10" in str(exc.value)
-    assert "local scan is free" in str(exc.value)
+        push_report(REPORT, token="mcpa_test", base="https://api.example")
+    assert "5 of 5" in str(exc.value)
+    assert "already ran" in str(exc.value)
 
 
 def test_a_rejected_token_says_how_to_fix_it(monkeypatch):
-    patched(monkeypatch, (401, {"detail": "That API token is not valid."}))
+    patched(monkeypatch, 401, {"detail": "That API token is not valid."})
     with pytest.raises(ApiError, match="login"):
-        scan_in_cloud(INVENTORY, token="mcpa_stale", base="https://api.example")
+        push_report(REPORT, token="mcpa_stale", base="https://api.example")
 
 
-def test_a_failed_scan_reports_the_reason(monkeypatch):
-    patched(
-        monkeypatch,
-        (202, {"id": "s1", "status": "queued"}),
-        (200, {"id": "s1", "status": "failed", "error_code": "capture_error", "error_detail": "no answer"}),
-    )
-    with pytest.raises(AuditError, match="capture_error"):
-        scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example")
+def test_an_unexpected_status_is_still_one_line(monkeypatch):
+    patched(monkeypatch, 500, {"detail": "boom"})
+    with pytest.raises(ApiError, match="Cloud returned 500"):
+        push_report(REPORT, token="mcpa_test", base="https://api.example")
 
 
-def test_polling_gives_up_with_somewhere_to_look(monkeypatch):
-    patched(
-        monkeypatch,
-        (202, {"id": "s1", "status": "queued"}),
-        *[(200, {"id": "s1", "status": "running"})] * 5,
-    )
-    with pytest.raises(ApiError) as exc:
-        scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example", timeout=0.01)
-    assert "/v1/scans/s1" in str(exc.value)
-
-
-def test_progress_is_reported(monkeypatch):
-    patched(
-        monkeypatch,
-        (202, {"id": "s1", "status": "queued"}),
-        (200, {"id": "s1", "status": "succeeded"}),
-        (200, REPORT),
-    )
+def test_progress_reports_the_verdict_and_the_link(monkeypatch):
+    patched(monkeypatch, 201, {"id": "s1"})
     lines: list[str] = []
-    scan_in_cloud(INVENTORY, token="mcpa_test", base="https://api.example", progress=lines.append)
-    assert any("queued as s1" in line for line in lines)
-    assert any("quota" in line for line in lines)
+    push_report(REPORT, token="mcpa_test", base="https://api.example", progress=lines.append)
+    assert any("CONFIRMED" in line and "s1" in line for line in lines)

@@ -22,8 +22,10 @@ if [ "$sources" -ne 1 ]; then
   exit 2
 fi
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${MCP_AUDIT_TOKEN:-}" ]; then
-  echo "::error::set api-key (bring your own key) or cloud-token"
+# The scan always runs here, on the caller's key. A cloud token only decides whether the
+# finished report is also uploaded for history and monitoring.
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "::error::set api-key: the scan runs in this job, on your own Anthropic key"
   echo "exit-code=4" >> "$GITHUB_OUTPUT"
   exit 4
 fi
@@ -44,7 +46,7 @@ args+=(--trials "$INPUT_TRIALS" --max-cost "$INPUT_MAX_COST" --fail-on "$INPUT_F
 args+=(--sarif "$INPUT_SARIF" --md mcp-audit.md --json)
 [ -n "${INPUT_TASK:-}" ] && args+=(--task "$INPUT_TASK")
 [ -n "${INPUT_MODEL:-}" ] && args+=(--model "$INPUT_MODEL")
-[ -n "${MCP_AUDIT_TOKEN:-}" ] && args+=(--cloud)
+[ -n "${MCP_AUDIT_TOKEN:-}" ] && args+=(--push)
 
 while IFS= read -r pair; do
   [ -n "$pair" ] && args+=(--env "$pair")

@@ -33,11 +33,12 @@ Remote server instead:
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Hosted (no LLM key of your own — we meter it):
+Also keep the history (the scan still runs here, on your key):
 
 ```yaml
         with:
           command: npx -y @some/mcp-server
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           cloud-token: ${{ secrets.MCP_AUDIT_TOKEN }}
 ```
 

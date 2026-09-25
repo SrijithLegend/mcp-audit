@@ -58,9 +58,9 @@ export default function Billing() {
             {me.data && (
               <div className="mt-4 max-w-xs">
                 <Meter
-                  used={me.data.usage.scans_used}
-                  limit={me.data.usage.scans_limit}
-                  label="scans this period"
+                  used={me.data.usage.reports_used}
+                  limit={me.data.usage.reports_limit}
+                  label="reports stored this period"
                 />
               </div>
             )}
@@ -100,7 +100,7 @@ export default function Billing() {
               {plan.price_monthly_usd === 0 ? "Free" : `$${plan.price_monthly_usd}/mo`}
             </p>
             <ul className="dim mt-2 space-y-1 text-xs">
-              <li>{plan.scans_per_month} scans / month</li>
+              <li>{plan.reports_per_month} reports / month</li>
               <li>{plan.max_trials} trials per arm</li>
               <li>{plan.monitors === 0 ? "no monitoring" : `${plan.monitors} monitors`}</li>
               <li>{plan.retention_days} days of history</li>
@@ -138,7 +138,8 @@ export default function Billing() {
       <p className="dim text-xs">
         Downgrading never deletes data: over-limit monitors are paused, history stops being served
         past the new retention window, and nothing is erased that the retention job would not have
-        erased anyway. <Link href="/legal/refunds">Refund policy</Link>.
+        erased anyway. Scanning is never affected by your plan — the CLI runs on your key.{" "}
+        <Link href="/legal/refunds">Refund policy</Link>.
       </p>
     </div>
   );

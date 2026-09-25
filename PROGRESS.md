@@ -57,12 +57,25 @@ Phase 4 — `cloud/web`: Next.js 16 App Router, 21 routes, one renderer for host
 shows invisible characters instead of hiding them, zod at the JSON boundary, per-request CSP
 nonce, side-by-side arm view. **61 vitest tests**, Playwright specs written.
 
-Unit economics (2026-09-25) — hosted scanning is bounded in **dollars**, not scan counts.
-Three leaks closed: `usage.cost_micros` was recorded and never read; the worker used the
-global per-scan ceiling instead of the plan's (so a Free scan could cost 10× what Free
-says); and monitor auto-scans bypassed quota entirely (~300 free scans/month at ten daily
-monitors). `tests/test_economics.py` (16 tests) proves the bound holds even when every scan
-costs its maximum.
+**BYOK everywhere (2026-09-25).** The Cloud no longer runs scans at all, which supersedes
+the model-budget work from earlier the same day. Scans run on the user's own key, on their
+machine or in their CI, and `scan --push` uploads the finished report; the hosted service
+stores, diffs, monitors and shares it. Our inference cost is **zero by construction**:
+
+- No LLM key in the Cloud config, and no import of `harness`/`audit`/`cost`.
+  `mcp_audit.meta` holds the constants the Cloud legitimately needs, so it never has a
+  reason to reach for the agent loop. Two grep tests enforce it (invariant 3', D12 revised).
+- `POST /v1/scans` ingests a report instead of queueing a run. The worker dropped
+  `run_scan`; what is left needs no model (monitoring = capture + hash, plus retention).
+- Monitors alert with the diff and the command to re-audit, rather than auto-scanning.
+  Detecting the change is the half that needs no inference, and it is most of the value.
+- Plan limits are storage and anti-abuse now (`reports_per_month`), not money. Two plans
+  sold, Free and Pro; Team stays in code, unlisted (D13).
+- A stored report is presented as a claim the uploader made, attributed to their engine
+  version, not as a measurement we performed. The inventory hash makes it checkable.
+
+Bugs the tests caught: an empty `{}` validated into a tidy CLEAN verdict with zero trials
+(now refused), and `record_cost` dropped costs when no usage row existed yet.
 
 Phases 5–7 — billing behind `BillingProvider` (Dodo + Polar, Standard Webhooks, plan state
 machine with a 7-day grace), webhook replay script, `scan --cloud`, org outbound webhooks +
@@ -87,24 +100,24 @@ workflow (staging on main, production on tag), 6 runbooks, k6 quota-race load te
 
 | What | Value | When |
 |---|---|---|
-| Offline tests (engine / cloud API / web) | 180 / 158 / 61 | 2026-09-25 |
+| Offline tests (engine / cloud API / web) | 181 / 148 / 61 | 2026-09-25 |
 | Fixture gate (poisoned CONFIRMED rate) | not measured | — |
 | Control fixtures (false positive rate) | not measured | — |
-| Median cost per scan | not measured (assumed $0.06, pessimistic) | — |
-| Worst-case margin, Pro / Team | $12.86 / $52.26 guaranteed | 2026-09-25 |
-| Max monthly exposure (all orgs) | ~$750 (daily breaker × 30) | 2026-09-25 |
+| Median cost per scan | not measured (and it is the customer's cost, not ours) | — |
+| Our inference cost per customer | **$0, enforced by grep** | 2026-09-25 |
+| Worst-case margin, Pro | **$17.86** of $19 (no variable cost to subtract) | 2026-09-25 |
 | Real-server benchmark | not run | — |
 
 ## Open questions for Srijith
 
-- ~~**Plan prices.**~~ **Resolved differently.** Plans now include *dollars of model time*
-  and the scan count is derived from that, so the margin no longer depends on the cost
-  estimate being right: Pro keeps $12.86 and Team $52.26 even if a customer spends every
-  included dollar. Gate 1 now only decides how many scans a budget buys — it cannot make
-  the service unprofitable. **What still needs your sign-off:** the budgets themselves
-  ($0.30 / $5 / $22, i.e. 30 % of net revenue) and the fact that the advertised scan counts
-  fell out at 5 / 83 / 366 because `ESTIMATED_COST_PER_SCAN_USD` is a pessimistic $0.06.
-  One constant to change in `plans.py` once Gate 1 measures the real number.
+- ~~**Plan prices.**~~ **Settled by the BYOK change.** We do not resell tokens, so there is
+  no variable cost and no margin question: Pro keeps $17.86 of $19 after the MoR fee. What
+  needs your eye instead is the *limits*, which are now pure product decisions — Free at 5
+  reports and 3 servers, Pro at 500 and 100. A wrong number there costs disk, not money.
+- **Free has no no-key onramp any more.** A new user needs an Anthropic account before they
+  can try anything, which is real friction for an evaluator who has not got one. If that
+  bites, the options are a hosted demo against *our own* fixture servers (bounded, because
+  they are ours) or a recorded walkthrough. Flagging rather than guessing.
 - **`poisoned_suppress.py` and the gate.** Suppressing an audit tool is steering *away* from
   a call, and by the current rules that is behavioural, so it can legitimately land on
   SUSPECTED rather than CONFIRMED. Either suppression of an audit-shaped tool becomes

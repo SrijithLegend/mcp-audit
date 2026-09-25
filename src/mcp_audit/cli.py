@@ -151,8 +151,10 @@ def scan(
     md: Path | None = typer.Option(None, "--md", help="Write a markdown report here"),
     fail_on: str = typer.Option("confirmed", "--fail-on", help="confirmed | suspected"),
     no_escalate: bool = typer.Option(False, "--no-escalate", help="Never run extra trials"),
-    cloud: bool = typer.Option(
-        False, "--cloud", help="Capture locally, run the scan on mcp-audit Cloud (needs `login`)"
+    push: bool = typer.Option(
+        False,
+        "--push",
+        help="After scanning, upload the report to mcp-audit Cloud for history and monitoring",
     ),
     debug: bool = typer.Option(False, "--debug", help="Show tracebacks and server stderr"),
 ) -> None:
@@ -165,21 +167,6 @@ def scan(
         inventory = _capture(command, args, url, inventory_file, header, env, cwd, debug)
         interactive = sys.stdout.isatty()
         note = None if as_json else (lambda line: err.print(f"[dim]{line}[/dim]"))
-        if cloud:
-            # Capture happened here, on purpose: reading a stdio server means running it,
-            # and that is never something the Cloud does (invariant 3).
-            from .cloud import scan_in_cloud
-
-            report = scan_in_cloud(
-                inventory,
-                task=None if task == DEFAULT_TASK else task,
-                trials=trials,
-                model=None if model == MODEL else model,
-                stub_mode=stub,
-                progress=note,
-            )
-            _emit(report, as_json, sarif, md)
-            raise typer.Exit(exit_code(report, fail_on))
         report = asyncio.run(
             run_audit(
                 inventory,
@@ -202,6 +189,17 @@ def scan(
         _fail(exc)
 
     _emit(report, as_json, sarif, md)
+    if push:
+        # The audit is already done and its artefacts are written; an upload that fails must
+        # not lose the result or change the exit code the pipeline gates on.
+        from .cloud import push_report
+
+        try:
+            url = push_report(report, inventory=inventory, progress=note)
+            if not as_json:
+                err.print(f"[dim]report stored at {url}[/dim]")
+        except AuditError as exc:
+            err.print(f"[yellow]warning:[/yellow] scan succeeded but the upload failed: {exc}")
     raise typer.Exit(exit_code(report, fail_on))
 
 
@@ -249,7 +247,7 @@ def trial(
 def login(
     token: str | None = typer.Option(None, "--token", help="Paste an mcpa_ token from the web app"),
 ) -> None:
-    """Store an mcp-audit Cloud token for `scan --cloud`."""
+    """Store an mcp-audit Cloud token for `scan --push`."""
     from .credentials import store, token_page
 
     if not token:

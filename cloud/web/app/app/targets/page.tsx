@@ -114,7 +114,7 @@ export default function Targets() {
             Add target
           </Button>
           <span className="dim text-xs">
-            {targets.data?.items.length ?? 0} of {me.data?.entitlements.remote_targets ?? 1} on this
+            {targets.data?.items.length ?? 0} of {me.data?.entitlements.targets ?? 1} on this
             plan
           </span>
         </div>

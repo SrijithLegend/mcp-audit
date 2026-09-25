@@ -15,11 +15,13 @@ mcp-audit scan npx -y @some/mcp-server
 # 3. see what sanitization removed, before you believe the verdict
 mcp-audit sanitize npx -y @some/mcp-server`;
 
-const CLOUD = `# capture locally (stdio needs your machine), scan on ours
-mcp-audit inspect npx -y @some/mcp-server --out inventory.json
-# then upload inventory.json at /app/scans/new, or:
-mcp-audit login --token mcpa_...
-mcp-audit scan npx -y @some/mcp-server --cloud`;
+const CLOUD = `# link this machine to your organisation, once
+mcp-audit login --token mcpa_...     # Settings -> Tokens
+
+# scan as usual, and keep the result
+mcp-audit scan npx -y @some/mcp-server --push
+
+# the scan ran here, on your key. only the finished report was uploaded.`;
 
 const CI = `permissions:
   contents: read
@@ -36,17 +38,19 @@ jobs:
           trials: 5
           max-cost: "0.50"
           fail-on: confirmed
-          api-key: \${{ secrets.ANTHROPIC_API_KEY }}
-          # or: cloud-token: \${{ secrets.MCP_AUDIT_TOKEN }}`;
+          api-key: \${{ secrets.ANTHROPIC_API_KEY }}     # the scan runs in this job
+          cloud-token: \${{ secrets.MCP_AUDIT_TOKEN }}   # optional: keep the history`;
 
 const API = `# every hosted feature is an API call; the web app is just a client
 curl -H "Authorization: Bearer mcpa_..." https://api.mcpaudit.dev/v1/me
 
+# store a report your own run produced
+mcp-audit scan npx -y @some/server --json > report.json
 curl -X POST https://api.mcpaudit.dev/v1/scans \
   -H "Authorization: Bearer mcpa_..." \
   -H "Idempotency-Key: $(uuidgen)" \
   -H "content-type: application/json" \
-  -d @<(jq '{inventory: .}' inventory.json)
+  -d @<(jq '{report: .}' report.json)
 
 curl -H "Authorization: Bearer mcpa_..." \
   https://api.mcpaudit.dev/v1/scans/<id>/report.sarif`;
@@ -70,12 +74,18 @@ export default function Docs() {
         </p>
       </Card>
 
-      <Card title="Hosted scans">
+      <Card title="Keeping the results (mcp-audit Cloud)">
         <pre className="hostile surface rounded p-3 text-xs">{CLOUD}</pre>
         <p className="dim mt-2 text-xs">
-          Capture always happens on your side for stdio servers, because capturing means running
-          them. We accept the resulting inventory, or an <code>https://</code> endpoint we can fetch
-          ourselves.
+          <strong>Your Anthropic key never leaves your machine.</strong> The hosted service holds no
+          LLM key at all — a test greps it to prove no code path there can call a model — so it
+          could not run a scan for you even if you asked. What it does instead is the part a local
+          CLI cannot: keep history you can diff, watch a remote server for changed prose while you
+          sleep, hand a maintainer a share link, and let a team see all of it.
+        </p>
+        <p className="dim mt-2 text-xs">
+          Practical consequence: no rationing. Scan as often and as deeply as you like — Anthropic
+          bills you for what you use, and we charge a flat fee for the history.
         </p>
       </Card>
 

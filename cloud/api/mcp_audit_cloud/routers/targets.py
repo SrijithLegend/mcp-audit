@@ -32,11 +32,11 @@ async def create_target(
 ) -> TargetOut:
     who.require(Role.OWNER, Role.ADMIN)
     count = (await db.execute(scoped(select(func.count(Target.id)), Target, who.org_id))).scalar_one()
-    if count >= who.entitlements.remote_targets:
+    if count >= who.entitlements.targets:
         raise Problem(
             402,
             "limit_reached",
-            f"This plan allows {who.entitlements.remote_targets} targets.",
+            f"This plan allows {who.entitlements.targets} targets.",
         )
     if body.kind == "remote_http":
         if not body.url:

@@ -163,14 +163,8 @@ export function useScans(params: { verdict?: string; targetId?: string } = {}) {
 
 export function useScan(id: string) {
   const api = useApi();
-  return useQuery({
-    queryKey: ["scan", id],
-    queryFn: () => api(`/v1/scans/${id}`, Scan),
-    // Poll while it is running, stop the moment it is not: a finished scan does not
-    // change, and a dashboard that keeps asking is just noise on both sides.
-    refetchInterval: (query) =>
-      query.state.data && ["queued", "running"].includes(query.state.data.status) ? 2000 : false,
-  });
+  // No polling: an uploaded report arrives finished, so there is no state to wait for.
+  return useQuery({ queryKey: ["scan", id], queryFn: () => api(`/v1/scans/${id}`, Scan) });
 }
 
 export function useReport(id: string, ready: boolean) {
@@ -183,7 +177,8 @@ export function useReport(id: string, ready: boolean) {
   });
 }
 
-export function useCreateScan(): UseMutationResult<Scan, Error, Record<string, unknown>> {
+/** Upload a report the user's own CLI produced. There is nothing to run here. */
+export function useUploadReport(): UseMutationResult<Scan, Error, Record<string, unknown>> {
   const api = useApi();
   const client = useQueryClient();
   return useMutation({
@@ -191,7 +186,7 @@ export function useCreateScan(): UseMutationResult<Scan, Error, Record<string, u
       api("/v1/scans", Scan, {
         method: "POST",
         body,
-        // A double-clicked submit button must not cost two scans.
+        // A double-clicked submit button must not store the report twice.
         idempotencyKey: crypto.randomUUID(),
       }),
     onSuccess: () => {
@@ -201,14 +196,13 @@ export function useCreateScan(): UseMutationResult<Scan, Error, Record<string, u
   });
 }
 
-export function useCancelScan(id: string) {
+export function useDeleteScan() {
   const api = useApi();
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => api(`/v1/scans/${id}/cancel`, Scan, { method: "POST" }),
+    mutationFn: (id: string) => api(`/v1/scans/${id}`, Empty, { method: "DELETE" }),
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["scan", id] });
-      void client.invalidateQueries({ queryKey: ["me"] });
+      void client.invalidateQueries({ queryKey: ["scans"] });
     },
   });
 }

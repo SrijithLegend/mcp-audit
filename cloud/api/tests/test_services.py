@@ -130,30 +130,7 @@ async def test_one_off_headers_are_read_once_then_gone(redis):
     assert await secrets.take_one_off(redis, scan_id) == {}
 
 
-# --- the spend breaker (invariant 7) -------------------------------------------
-
-
-async def test_the_breaker_allows_spend_under_the_limit(redis):
-    await quota.check_breaker(redis, 0.10)
-
-
-async def test_the_breaker_stops_spend_over_the_limit(redis):
-    await quota.add_spend(redis, 30.0)
-    with pytest.raises(Problem) as exc:
-        await quota.check_breaker(redis, 0.10)
-    assert exc.value.code == "spend_breaker" and exc.value.status == 503
-
-
-async def test_the_breaker_fails_closed_when_redis_is_down():
-    """The last line of defence does not get to fail open."""
-
-    class Broken:
-        async def get(self, key):
-            raise ConnectionError("redis is gone")
-
-    with pytest.raises(Problem) as exc:
-        await quota.check_breaker(Broken(), 0.1)
-    assert exc.value.code == "breaker_unavailable"
+# --- periods ------------------------------------------------------------------
 
 
 def test_period_start_is_the_first_of_the_month():
@@ -197,7 +174,7 @@ async def test_a_redis_outage_does_not_take_the_api_down():
     await ratelimit.hit("k3", limit=1, window_seconds=60, redis_client=Broken())
 
 
-# --- monitor diffs (the rug-pull feature) --------------------------------------
+# --- monitor diffs live in test_monitors.py; what is left here is the diff function ----
 
 
 def old_inventory() -> Inventory:

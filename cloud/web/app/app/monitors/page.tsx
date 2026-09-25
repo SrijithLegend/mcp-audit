@@ -21,7 +21,9 @@ export default function Monitors() {
         <h1 className="text-xl font-semibold">Monitors</h1>
         <p className="dim text-sm">
           A server that was clean when you installed it can ship new descriptions tomorrow. We
-          re-capture on a schedule, compare the hash, and scan again the moment it changes.
+          re-capture on a schedule and compare the hash — that part needs no model, so we can do it
+          while you sleep. When it changes you get the diff and the command to re-audit it on your
+          own key.
         </p>
       </header>
 
@@ -92,11 +94,19 @@ function Changes({ monitorId }: { monitorId: string }) {
             {change.scan_id && (
               <>
                 {" · "}
-                <Link href={`/app/scans/${change.scan_id}`}>see the re-scan</Link>
+                <Link href={`/app/scans/${change.scan_id}`}>see the re-audit</Link>
               </>
             )}
           </p>
 
+          {!change.diff.first_capture && !change.scan_id && (
+            <div className="mt-2">
+              <Alert kind="warn">
+                <p>This server changed and has not been re-audited.</p>
+                <pre className="hostile mt-1 text-xs">mcp-audit scan --url &lt;this server&gt; --push</pre>
+              </Alert>
+            </div>
+          )}
           {change.diff.first_capture ? (
             <p className="dim mt-1 text-xs">
               First capture: {change.diff.tools_added.length} tools recorded as the baseline.

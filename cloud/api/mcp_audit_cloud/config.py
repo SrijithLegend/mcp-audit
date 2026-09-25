@@ -33,17 +33,17 @@ class Settings(BaseSettings):
     clerk_issuer: str = ""
     clerk_authorized_parties: list[str] = Field(default_factory=list)
 
-    # Ours. The worker needs it; the API does not (SECURITY.md §4).
-    anthropic_api_key: str = ""
+    # There is deliberately **no** LLM key here. Scans run on the user's own key, on their
+    # machine or in their CI, and this service only ingests the finished report (D12'). A
+    # test greps this package to prove no code path can call a model, which is what makes
+    # our inference cost structurally zero rather than merely budgeted.
 
     # AES-GCM key for remote-target header values, base64, 32 bytes.
     header_enc_key: str = ""
 
-    # Money guards (invariant 7)
-    daily_spend_limit_usd: float = 25.0
-    scan_cost_ceiling_usd: float = 1.00
-
-    # Abuse limits (SECURITY.md §6)
+    # Abuse limits (SECURITY.md §6). These bound our storage and bandwidth; there is no
+    # inference bill to bound.
+    max_report_bytes: int = 4 * 1024 * 1024
     max_inventory_bytes: int = 2 * 1024 * 1024
     max_tools: int = 500
     max_schema_nodes: int = 5000
@@ -90,7 +90,6 @@ class Settings(BaseSettings):
             for name in (
                 "clerk_jwks_url",
                 "clerk_issuer",
-                "anthropic_api_key",
                 "header_enc_key",
                 "billing_webhook_secret",
             )

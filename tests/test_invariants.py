@@ -21,6 +21,15 @@ CLOUD = ROOT / "cloud"
 #: Invariant 1. No allowlist, no exceptions, no "just this one call".
 TOOL_EXECUTION = re.compile(r"\bcall_tool\b|\bsession\.call\w*|\bcall_tool_result\b")
 
+#: Invariant 3'. The Cloud never calls a model. Scans run on the user's own key, on their
+#: machine or in their CI, and the Cloud only ingests the finished report -- which is why
+#: our inference cost is structurally zero rather than merely budgeted. `mcp_audit.meta`
+#: exists so the Cloud can read constants without importing the agent loop.
+INFERENCE = re.compile(
+    r"anthropic|AsyncAnthropic|messages\.create|count_tokens|"
+    r"mcp_audit\.harness|mcp_audit\.audit|mcp_audit\.cost"
+)
+
 #: Invariant 3. The Cloud never spawns a process from user input.
 SUBPROCESS = re.compile(
     r"\bsubprocess\b|\bos\.system\b|\bcreate_subprocess\w*|\bstdio_client\b|"
@@ -56,6 +65,24 @@ def test_cloud_never_spawns_processes():
             if SUBPROCESS.search(code):
                 offenders.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
     assert not offenders, "cloud/ can spawn a process:\n" + "\n".join(offenders)
+
+
+def test_the_cloud_never_calls_a_model():
+    """Invariant 3': the business model, as a grep.
+
+    If this fails, somebody reintroduced an inference path into the hosted service and our
+    costs are no longer zero. Importing the engine's agent loop is exactly how that would
+    come back, so the module names are in the pattern too.
+    """
+    offenders = []
+    for path in python_files(CLOUD):
+        if path.name.startswith("test_") or "tests" in path.parts:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if INFERENCE.search(code):
+                offenders.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
+    assert not offenders, "cloud/ can call a model:\n" + "\n".join(offenders)
 
 
 def test_minimal_env_carries_no_secrets(monkeypatch):

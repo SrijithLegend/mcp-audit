@@ -41,7 +41,7 @@ mcp-audit sanitize npx -y @some/server
 
 Useful flags: `--trials 5`, `--task`, `--model`, `--stub canary|inert`, `--max-cost 1.00`,
 `--json`, `--sarif out.sarif`, `--md report.md`, `--fail-on confirmed|suspected`,
-`--no-escalate`, `--concurrency 4`, `--cloud`, `--debug`.
+`--no-escalate`, `--concurrency 4`, `--push`, `--debug`.
 
 ### What a finding looks like
 
@@ -154,12 +154,19 @@ One trial runs the whole inventory, so API calls are roughly `2 × trials × tur
 `count_tokens`, prints an estimate, and **refuses** to exceed `--max-cost` (default
 $1.00). Typical small server at defaults: a few cents on `claude-haiku-4-5`.
 
-The CLI is free and unlimited — you pay Anthropic directly, and we never see the key. The
-hosted service runs on our key instead, so its plans include **dollars of model time**
-rather than a flat scan count: a 26-tool server at 10 trials genuinely costs many times a
-3-tool server at 5, and pretending otherwise would mean either overcharging small users or
-losing money on large ones. When a budget runs out, hosted scanning pauses and says so.
-There is no surprise overage bill, and the CLI keeps working.
+**Every scan runs on your key, on your machine.** That is true of the hosted service too:
+mcp-audit Cloud holds no Anthropic credential — not yours and not one of ours — and a grep
+test fails the build if any code path there could call a model. So there is nothing to
+ration. Scan as often and as deeply as you like; Anthropic bills you for what you use.
+
+What the hosted service does is the part a local CLI cannot: keep the history so you can
+diff it, watch a remote server and tell you when its prose changes, hand a maintainer a
+share link, and let a team see all of it.
+
+```bash
+mcp-audit login --token mcpa_...                      # once
+mcp-audit scan npx -y @some/mcp-server --push         # runs here, result stored there
+```
 
 ## Safety
 
@@ -178,7 +185,8 @@ There is no surprise overage bill, and the CLI keeps working.
     command: npx -y @some/mcp-server
     trials: 5
     fail-on: confirmed
-    api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    api-key: ${{ secrets.ANTHROPIC_API_KEY }}     # the scan runs in your job
+    cloud-token: ${{ secrets.MCP_AUDIT_TOKEN }}   # optional: keep the history
 ```
 
 Writes SARIF to GitHub code scanning and fails the job on a confirmed finding.

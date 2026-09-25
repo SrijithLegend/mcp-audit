@@ -77,28 +77,22 @@ async def me(
         current_org=current,
         plan=str(who.plan),
         entitlements={
-            "scans_per_month": ent.scans_per_month,
+            "reports_per_month": ent.reports_per_month,
             "max_trials": ent.max_trials,
-            "remote_targets": ent.remote_targets,
+            "targets": ent.targets,
             "monitors": ent.monitors,
             "retention_days": ent.retention_days,
             "api_tokens": ent.api_tokens,
             "seats": ent.seats,
             "custom_task": ent.custom_task,
-            "included_model_usd": ent.included_model_usd,
-            "max_cost_per_scan_usd": ent.max_cost_usd,
             "features": list(ent.features),
         },
         usage=UsageOut(
             period_start=usage.period_start,
-            scans_used=usage.scans_used,
-            scans_limit=ent.scans_per_month,
-            cost_usd=round((usage.cost_micros or 0) / 1_000_000, 4),
-            # The limit that actually binds: dollars of model time, not scan count.
-            included_model_usd=ent.included_model_usd,
-            model_usd_remaining=round(
-                max(0.0, ent.included_model_usd - (usage.cost_micros or 0) / 1_000_000), 4
-            ),
+            reports_used=usage.scans_used,
+            reports_limit=ent.reports_per_month,
+            # Their spend on their own key, summed from the reports they uploaded.
+            your_model_cost_usd=round((usage.cost_micros or 0) / 1_000_000, 4),
         ),
     )
 

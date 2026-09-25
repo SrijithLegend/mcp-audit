@@ -5,9 +5,16 @@ or a checklist item. Section numbers are referenced from CLAUDE.md and ROADMAP.m
 
 ## 1. Assets and adversaries
 
-**Assets:** our Anthropic API key and spend; customer scan reports (they reveal what
-MCP servers a company runs and which are vulnerable); remote-server auth headers;
-API tokens; billing state; the integrity of verdicts.
+**Assets:** customer scan reports (they reveal what MCP servers a company runs and which
+are vulnerable); remote-server auth headers; API tokens; billing state; the integrity of
+verdicts.
+
+**Not an asset any more, and deliberately:** an LLM key in the hosted service. Scans run on
+the user's own key, wherever that key already lives, and the Cloud ingests the finished
+report (invariant 3'). There is no inference credential to steal and no inference spend to
+abuse, which removes a whole row from this table rather than mitigating it. The same
+reasoning is why we refuse to hold a *customer's* key: it would make a breach of our
+database a breach of their billing account.
 
 **Adversaries:**
 - A malicious MCP server author (controls every string in the inventory, and for
@@ -63,9 +70,9 @@ Remote-target fetching is the Cloud's biggest attack surface. Required:
 - API tokens: generated with `secrets.token_bytes(32)`, shown once, stored as
   sha256; lookup by hash; constant-time compare; `last_used_at` updated async.
   Revocation takes effect immediately.
-- Anthropic key: server-side only, workers only (API process doesn't need it except for
-  `count_tokens` — prefer doing estimation in the worker too). Per-environment keys with
-  Anthropic-console spend limits set as the outermost breaker.
+- Anthropic key: **the Cloud has none.** No setting, no secret, no code path (invariant 3').
+  Development keys live on developer machines and in the fixture-gate CI job only, with
+  Anthropic-console spend limits set as the outermost breaker on those.
 - Log redaction: structlog processor masks `authorization`, `cookie`, `x-api-key`,
   `mcpa_*`, `sk-ant-*`, and any key containing `token|secret|password|key`.
 
@@ -89,16 +96,18 @@ Remote-target fetching is the Cloud's biggest attack surface. Required:
   JSON parsed with size cap at the ASGI layer (reject by `Content-Length` and by
   streamed count).
 - Task text ≤ 500 chars. Trials bounded by plan. `max_turns` fixed server-side.
-- **LLM-proxy abuse:** an attacker could use custom tasks + tool args to extract free
-  model output. Mitigations: stored/returned args truncated to 512 chars, no assistant
-  text is ever returned, per-org quota, per-IP signup throttling, Free-plan task is the
-  default task only (custom task = Pro+).
+- **LLM-proxy abuse: structurally impossible.** There is no model behind this API to proxy
+  to, so the classic "use their inference for free" attack has nothing to aim at. What
+  remains is *storage* abuse: reports are capped per plan, arguments truncated to 512 chars,
+  at most 64 traces and 500 findings per report, and free organisations per account are
+  capped so "free per org" is not "free per org somebody creates".
 - Rate limits (Redis sliding window): unauthenticated 30 req/min/IP; authenticated
   300 req/min/org; scan creation 10/min/org; token creation 10/hour/org; shared report
   views 60/min/IP.
 - Quota race: reservation under `SELECT … FOR UPDATE` (ROADMAP §3.4); test with 50
   concurrent submissions against a quota of 10 → exactly 10 accepted.
-- Global daily spend breaker (ROADMAP §3.4).
+- No spend breaker, because there is no spend. The equivalent control is the report limit,
+  reserved under a row lock so a burst of 50 uploads against a limit of 5 accepts 5.
 
 ## 7. Webhooks (inbound billing, outbound customer)
 
@@ -150,6 +159,7 @@ Remote-target fetching is the Cloud's biggest attack surface. Required:
 
 - [ ] No-tool-execution grep invariant (src + cloud)
 - [ ] No-subprocess invariant (cloud)
+- [ ] No-inference invariant (cloud): no LLM key, no agent-loop import
 - [ ] Spawn env allowlist test
 - [ ] SSRF test table (§3) all rejected; egress proxy configured
 - [ ] Header values encrypted, write-only, redacted in logs
@@ -158,7 +168,7 @@ Remote-target fetching is the Cloud's biggest attack surface. Required:
 - [ ] RLS enabled + tested
 - [ ] Input limits enforced at ASGI + pydantic
 - [ ] Rate limits + quota race test
-- [ ] Daily spend breaker + Anthropic console limit
+- [ ] Report limit reserved atomically (the quota race test)
 - [ ] Webhook signature/replay/out-of-order tests
 - [ ] CSP/HSTS/headers verified in prod (securityheaders.com A)
 - [ ] Hidden-Unicode rendering + no HTML rendering of server text

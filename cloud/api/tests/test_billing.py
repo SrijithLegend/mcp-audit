@@ -19,7 +19,7 @@ from mcp_audit_cloud.billing import WebhookError
 from mcp_audit_cloud.billing.dodo import DodoProvider
 from mcp_audit_cloud.billing.polar import PolarProvider
 from mcp_audit_cloud.models import Plan, Subscription, SubscriptionStatus
-from mcp_audit_cloud.plans import PLANS, margin_ok
+from mcp_audit_cloud.plans import PLANS, listed_plans
 from mcp_audit_cloud.routers.billing import GRACE, effective_plan
 
 SECRET = "whsec_" + base64.b64encode(b"k" * 32).decode()
@@ -215,27 +215,26 @@ def test_incomplete_is_free():
 
 # --- pricing sanity (ROADMAP §5.1) ----------------------------------------------
 #
-# The arithmetic itself lives in tests/test_economics.py, which is where the question
-# "can this cost us more than it earns" is answered. These two just pin the shape of the
-# table so a casual edit cannot quietly change what customers were sold.
+# There is no margin arithmetic to check any more: scans run on the customer's key, so the
+# $19 buys the software and our variable cost is zero (tests/test_economics.py proves the
+# "zero" part by grep). What is left is pinning the shape of what customers were sold.
 
 
 def test_the_plan_table_keeps_its_shape():
     assert PLANS[Plan.FREE].price_monthly_usd == 0.0
     assert PLANS[Plan.PRO].price_monthly_usd == 19.0
-    assert PLANS[Plan.TEAM].price_monthly_usd == 79.0
-    # Free gets the default task only: a custom task is the LLM-proxy abuse channel.
+    # Two plans on the page; Team stays in the code for existing rows.
+    assert [ent.plan for ent in listed_plans()] == [Plan.FREE, Plan.PRO]
+    # Free is the trial: default task only, shallow audits, no monitoring.
     assert PLANS[Plan.FREE].custom_task is False
+    assert PLANS[Plan.FREE].monitors == 0
     assert PLANS[Plan.PRO].custom_task is True
-    # Each tier buys strictly more model time than the one below it.
-    budgets = [PLANS[p].included_model_usd for p in (Plan.FREE, Plan.PRO, Plan.TEAM)]
-    assert budgets == sorted(budgets) and len(set(budgets)) == 3
+    assert PLANS[Plan.PRO].monitors > 0
 
 
-def test_margin_no_longer_depends_on_the_cost_estimate():
-    """The old version of this test took a cost per scan, because the margin used to
-    depend on one. Spend is capped in dollars now, so it does not."""
-    from inspect import signature
-
-    assert list(signature(margin_ok).parameters) == ["plan"]
-    assert all(margin_ok(plan) for plan in Plan)
+def test_a_paid_plan_is_paid_for_features_not_for_tokens():
+    """The pricing model in one assertion: nothing in an entitlement describes an amount of
+    model spend, because the customer pays Anthropic directly."""
+    for ent in PLANS.values():
+        assert not [name for name in ent.__dataclass_fields__ if "model_usd" in name]
+        assert not [name for name in ent.__dataclass_fields__ if "cost" in name]

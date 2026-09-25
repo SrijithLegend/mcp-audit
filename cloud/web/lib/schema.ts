@@ -211,26 +211,23 @@ export const Me = z.object({
     .nullish(),
   plan: z.string(),
   entitlements: z.object({
-    scans_per_month: z.number().int(),
+    reports_per_month: z.number().int(),
     max_trials: z.number().int(),
-    remote_targets: z.number().int(),
+    targets: z.number().int(),
     monitors: z.number().int(),
     retention_days: z.number().int(),
     api_tokens: z.number().int(),
     seats: z.number().int(),
     custom_task: z.boolean(),
-    included_model_usd: z.number().default(0),
-    max_cost_per_scan_usd: z.number().default(0),
     features: z.array(z.string()).default([]),
   }),
   usage: z.object({
     period_start: z.string(),
-    scans_used: z.number().int(),
-    scans_limit: z.number().int(),
-    cost_usd: z.number(),
-    // The limit that actually binds: scan count is derived from this.
-    included_model_usd: z.number().default(0),
-    model_usd_remaining: z.number().default(0),
+    reports_used: z.number().int(),
+    reports_limit: z.number().int(),
+    // What the *customer* spent on their own key, read off the reports they uploaded.
+    // Informational: it is their bill, and showing it back is the point.
+    your_model_cost_usd: z.number(),
   }),
 });
 export type Me = z.infer<typeof Me>;
@@ -239,10 +236,9 @@ export const Plan = z.object({
   plan: z.string(),
   price_monthly_usd: z.number(),
   price_yearly_usd: z.number(),
-  scans_per_month: z.number().int(),
-  included_model_usd: z.number().default(0),
+  reports_per_month: z.number().int(),
   max_trials: z.number().int(),
-  remote_targets: z.number().int(),
+  targets: z.number().int(),
   monitors: z.number().int(),
   monitor_min_interval_minutes: z.number().int(),
   retention_days: z.number().int(),
@@ -295,6 +291,21 @@ export const Problem = z.object({
   limit: z.number().optional(),
 });
 export type Problem = z.infer<typeof Problem>;
+
+/**
+ * A finished report from the CLI, validated before it is uploaded.
+ *
+ * Strict about the fields only a real run produces: every field of the engine's Report has a
+ * default, so `{}` would otherwise look like a tidy CLEAN verdict with zero trials.
+ */
+export const UploadableReport = Report.extend({
+  format: z.literal("mcp-audit/report@1"),
+  verdict: Verdict,
+  model: z.string().min(1, "a report records the model it used"),
+  trials: z.number().int().min(2, "one run is noise; a report needs at least 2 trials per arm"),
+  inventory_sha256: z.string().min(1, "a report records the inventory it audited"),
+});
+export type UploadableReport = z.infer<typeof UploadableReport>;
 
 /** The interchange file the CLI writes, validated before it is uploaded. */
 export const Inventory = z.object({

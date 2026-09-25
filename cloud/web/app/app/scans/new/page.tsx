@@ -3,57 +3,46 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { ApiError, useCreateScan, useMe, useTargets } from "@/lib/api";
-import { Inventory } from "@/lib/schema";
-import {
-  Alert,
-  Button,
-  ButtonLink,
-  Card,
-  Field,
-  inputClass,
-  Meter,
-} from "@/components/ui";
+import { ApiError, useMe, useTargets, useUploadReport } from "@/lib/api";
+import { UploadableReport } from "@/lib/schema";
+import { Alert, Button, ButtonLink, Card, Field, Meter, inputClass } from "@/components/ui";
 
-type Tab = "upload" | "remote" | "cli";
+type Tab = "cli" | "upload";
 
 /**
- * Three ways to start a scan, and the middle one is the only one that involves us
- * touching a server at all.
+ * Adding a report. Note what is *not* here: a "run a scan" button.
  *
- * There is deliberately no "run this command for me" tab: capturing a stdio server means
- * executing it, and that happens on the user's machine, never ours (invariant 3).
+ * Scanning needs a model, the model is the user's, and their key belongs on their machine —
+ * we neither hold one nor want to. So the flow is: they run the audit locally or in CI, and
+ * this page is where the result lands. The CLI tab is deliberately first, because pushing
+ * from CI is how anybody serious will use this.
  */
-export default function NewScan() {
-  const [tab, setTab] = useState<Tab>("upload");
+export default function AddReport() {
+  const [tab, setTab] = useState<Tab>("cli");
   const me = useMe();
   const targets = useTargets();
-  const create = useCreateScan();
+  const upload = useUploadReport();
   const router = useRouter();
 
-  const [inventory, setInventory] = useState<Inventory | null>(null);
+  const [report, setReport] = useState<UploadableReport | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [targetId, setTargetId] = useState("");
-  const [trials, setTrials] = useState(5);
-  const [task, setTask] = useState("");
-  const [headers, setHeaders] = useState("");
 
-  const entitlements = me.data?.entitlements;
-  const overQuota =
-    me.data !== undefined && me.data.usage.scans_used >= me.data.usage.scans_limit;
+  const overLimit =
+    me.data !== undefined && me.data.usage.reports_used >= me.data.usage.reports_limit;
 
   function readFile(file: File) {
     setParseError(null);
     void file.text().then((text) => {
       try {
-        // Validated client-side before it is ever uploaded: a clear message here beats a
-        // 422 from the API, and the API validates again anyway.
-        setInventory(Inventory.parse(JSON.parse(text)));
+        // Validated here before it is uploaded: a clear message beats a 422, and the API
+        // validates again anyway because a browser check protects nobody.
+        setReport(UploadableReport.parse(JSON.parse(text)));
       } catch (error) {
-        setInventory(null);
+        setReport(null);
         setParseError(
           error instanceof Error
-            ? `That file is not an mcp-audit inventory: ${error.message.slice(0, 300)}`
+            ? `That file is not an mcp-audit report: ${error.message.slice(0, 300)}`
             : "That file could not be read.",
         );
       }
@@ -61,43 +50,34 @@ export default function NewScan() {
   }
 
   function submit() {
-    const body: Record<string, unknown> = { trials };
-    if (task.trim() && entitlements?.custom_task) body.task = task.trim();
-    if (tab === "remote") {
-      body.target_id = targetId;
-      const parsed = parseHeaders(headers);
-      if (Object.keys(parsed).length > 0) body.headers = parsed;
-    } else {
-      body.inventory = inventory;
-    }
-    create.mutate(body, { onSuccess: (scan) => router.push(`/app/scans/${scan.id}`) });
+    const body: Record<string, unknown> = { report };
+    if (targetId) body.target_id = targetId;
+    upload.mutate(body, { onSuccess: (scan) => router.push(`/app/scans/${scan.id}`) });
   }
-
-  const ready = tab === "remote" ? Boolean(targetId) : Boolean(inventory);
 
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold">New scan</h1>
+        <h1 className="text-xl font-semibold">Add a report</h1>
         <p className="dim text-sm">
-          The scan runs the same task twice — once with the server&apos;s prose, once without — and
-          compares what the model called.
+          Scans run on your machine or in your CI, on your own Anthropic key. This is where the
+          result is kept, compared over time, and shared.
         </p>
       </header>
 
-      {overQuota && (
+      {overLimit && (
         <Alert kind="warn" action={<ButtonLink href="/pricing">See plans</ButtonLink>}>
-          This organisation has used its {me.data?.usage.scans_limit} hosted scans for the period.
-          The CLI still works and gives the same verdict.
+          This organisation has stored its {me.data?.usage.reports_limit} reports for the period.
+          Scanning is unaffected — the CLI is free and unlimited; only keeping the history here is
+          capped.
         </Alert>
       )}
 
-      <div className="flex gap-2" role="tablist" aria-label="Scan source">
+      <div className="flex gap-2" role="tablist" aria-label="How to add a report">
         {(
           [
-            ["upload", "Upload an inventory"],
-            ["remote", "Remote HTTP target"],
-            ["cli", "From the CLI"],
+            ["cli", "Push from the CLI or CI"],
+            ["upload", "Upload a JSON report"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -114,17 +94,39 @@ export default function NewScan() {
         ))}
       </div>
 
+      {tab === "cli" && (
+        <Card title="One command">
+          <pre className="hostile surface rounded p-3 text-xs">
+            {`# once, to link this organisation
+mcp-audit login --token mcpa_...     # create one in Settings -> Tokens
+
+# then, every time -- runs locally on your key, uploads the result
+mcp-audit scan npx -y @some/mcp-server --push`}
+          </pre>
+          <p className="dim mt-3 text-xs">
+            In CI, add <code>cloud-token</code> to the action and it pushes automatically. The scan
+            still runs in your job on your key; the token only says where to file the report.
+          </p>
+          <pre className="hostile surface mt-2 rounded p-3 text-xs">
+            {`- uses: SrijithLegend/mcp-audit/action@v0
+  with:
+    command: npx -y @some/mcp-server
+    api-key: \${{ secrets.ANTHROPIC_API_KEY }}
+    cloud-token: \${{ secrets.MCP_AUDIT_TOKEN }}`}
+          </pre>
+        </Card>
+      )}
+
       {tab === "upload" && (
-        <Card title="Inventory JSON">
+        <Card title="Report JSON">
           <p className="dim mb-3 text-xs">
-            Capture it with <code>mcp-audit inspect &lt;command&gt; --out inventory.json</code>. Stdio
-            capture runs the server, so it happens on your machine — we only ever see the result.
+            Produce one with <code>mcp-audit scan &lt;server&gt; --json &gt; report.json</code>.
           </p>
           <input
             type="file"
             accept="application/json,.json"
             className={inputClass}
-            aria-label="Inventory JSON file"
+            aria-label="Report JSON file"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) readFile(file);
@@ -135,137 +137,63 @@ export default function NewScan() {
               <Alert kind="error">{parseError}</Alert>
             </div>
           )}
-          {inventory && (
-            <p className="mt-3 text-xs">
-              {inventory.tools.length} tools
-              {inventory.server_name ? ` from ${inventory.server_name}` : ""},{" "}
-              {inventory.instructions ? "with" : "without"} server instructions.
-            </p>
-          )}
-        </Card>
-      )}
-
-      {tab === "remote" && (
-        <Card title="Remote target">
-          {targets.data?.items.length === 0 ? (
-            <p className="dim text-xs">
-              No targets yet. <a href="/app/targets">Add one</a> — https only, and we check it
-              resolves to a public address before we will connect.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              <Field label="Target" htmlFor="target">
-                <select
-                  id="target"
-                  className={inputClass}
-                  value={targetId}
-                  onChange={(event) => setTargetId(event.target.value)}
+          {report && (
+            <div className="mt-3 space-y-3">
+              <p className="text-xs">
+                <strong>{report.verdict}</strong> · {report.trials} trials per arm ·{" "}
+                {report.model} · inventory {report.inventory_sha256.slice(0, 12)}
+              </p>
+              {(targets.data?.items.length ?? 0) > 0 && (
+                <Field
+                  label="Attach to a target (optional)"
+                  hint="Links this report to a server you monitor, so the history lines up."
+                  htmlFor="target"
                 >
-                  <option value="">Choose a target…</option>
-                  {targets.data?.items.map((target) => (
-                    <option key={target.id} value={target.id}>
-                      {target.name} — {target.url}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field
-                label="Headers for this scan (optional)"
-                hint="One per line, 'Name: value'. Kept encrypted in Redis for an hour and never stored or returned."
-                htmlFor="headers"
-              >
-                <textarea
-                  id="headers"
-                  rows={3}
-                  className={inputClass}
-                  placeholder="Authorization: Bearer ..."
-                  value={headers}
-                  onChange={(event) => setHeaders(event.target.value)}
-                />
-              </Field>
+                  <select
+                    id="target"
+                    className={inputClass}
+                    value={targetId}
+                    onChange={(event) => setTargetId(event.target.value)}
+                  >
+                    <option value="">Not attached</option>
+                    {targets.data?.items.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {target.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="primary" disabled={upload.isPending} onClick={submit}>
+                  {upload.isPending ? "Storing…" : "Store this report"}
+                </Button>
+                <span className="dim text-xs">
+                  Uses 1 of your {me.data?.usage.reports_limit} reports this period.
+                </span>
+              </div>
             </div>
           )}
-        </Card>
-      )}
-
-      {tab === "cli" && (
-        <Card title="Scan from the CLI">
-          <pre className="hostile surface rounded p-3 text-xs">
-            {`mcp-audit login --token mcpa_...   # create one in Settings → Tokens
-mcp-audit scan npx -y @some/mcp-server --cloud`}
-          </pre>
-          <p className="dim mt-2 text-xs">
-            The CLI captures locally, uploads the inventory, and polls for the report. Drop{" "}
-            <code>--cloud</code> and it runs on your own key instead, free.
-          </p>
-        </Card>
-      )}
-
-      {tab !== "cli" && (
-        <Card title="Options">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field
-              label={`Trials per arm (max ${entitlements?.max_trials ?? 5} on your plan)`}
-              hint="One run is noise. Five is the smallest sample where 5/5 against 0/5 means anything."
-              htmlFor="trials"
-            >
-              <input
-                id="trials"
-                type="number"
-                min={2}
-                max={entitlements?.max_trials ?? 5}
-                className={inputClass}
-                value={trials}
-                onChange={(event) => setTrials(Number(event.target.value))}
-              />
-            </Field>
-            <Field
-              label="Task"
-              hint={
-                entitlements?.custom_task
-                  ? "What to ask the model to do. Leave empty for the default, server-agnostic task."
-                  : "Custom tasks are a Pro feature; free scans use the default task."
-              }
-              htmlFor="task"
-            >
-              <input
-                id="task"
-                className={inputClass}
-                disabled={!entitlements?.custom_task}
-                placeholder="Summarise what is in this server"
-                value={task}
-                onChange={(event) => setTask(event.target.value)}
-              />
-            </Field>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button variant="primary" disabled={!ready || create.isPending} onClick={submit}>
-              {create.isPending ? "Queueing…" : `Run ${trials * 2} trials`}
-            </Button>
-            <span className="dim text-xs">
-              Uses 1 of your {me.data?.usage.scans_limit} scans this period.
-            </span>
-          </div>
           {me.data && (
-            <div className="mt-3 max-w-xs">
+            <div className="mt-4 max-w-xs">
               <Meter
-                used={me.data.usage.scans_used}
-                limit={me.data.usage.scans_limit}
-                label="scans used"
+                used={me.data.usage.reports_used}
+                limit={me.data.usage.reports_limit}
+                label="reports stored"
               />
             </div>
           )}
-          {create.isError && (
+          {upload.isError && (
             <div className="mt-3">
               <Alert
                 kind="error"
                 action={
-                  create.error instanceof ApiError && create.error.upgradeUrl ? (
+                  upload.error instanceof ApiError && upload.error.upgradeUrl ? (
                     <ButtonLink href="/pricing">Upgrade</ButtonLink>
                   ) : undefined
                 }
               >
-                {create.error.message}
+                {upload.error.message}
               </Alert>
             </div>
           )}
@@ -273,13 +201,4 @@ mcp-audit scan npx -y @some/mcp-server --cloud`}
       )}
     </div>
   );
-}
-
-function parseHeaders(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of raw.split("\n")) {
-    const index = line.indexOf(":");
-    if (index > 0) out[line.slice(0, index).trim()] = line.slice(index + 1).trim();
-  }
-  return out;
 }

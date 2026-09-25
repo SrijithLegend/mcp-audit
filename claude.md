@@ -23,16 +23,23 @@ Two products, one engine:
 | Product | What | License | Who pays for LLM calls |
 |---|---|---|---|
 | **CLI** (`src/mcp_audit/`, PyPI) | Full engine, local capture, BYOK | MIT | User's own `ANTHROPIC_API_KEY` |
-| **Cloud** (`cloud/`) | Hosted scans, history, rug-pull monitoring, CI integration, teams, billing | see `cloud/LICENSE` (decision D7) | Us — metered by plan |
+| **Cloud** (`cloud/`) | History, diffs, rug-pull monitoring, CI integration, sharing, teams, billing | see `cloud/LICENSE` (decision D7) | **Nobody — it never calls a model** |
 
-The CLI must never be crippled to push people to Cloud. Cloud sells convenience,
-history, monitoring and teams — not the core verdict.
+The CLI must never be crippled to push people to Cloud. Cloud sells history, monitoring,
+sharing and teams — not the core verdict, which is free and unlimited.
+
+**Scans only ever run where the key is.** The user runs the audit locally or in CI on their
+own Anthropic key and pushes the finished report (`scan --push`); the Cloud ingests it. So
+our inference cost is structurally zero, not budgeted, and we hold no LLM credential of
+anyone's. `tests/test_invariants.py::test_the_cloud_never_calls_a_model` greps `cloud/` to
+keep it that way.
 
 ## Repository layout (target)
 
 ```
 src/mcp_audit/          # engine + CLI. Published to PyPI. No web/db deps here, ever.
   cli.py                # Typer app: inspect, sanitize, scan, trial (hidden), version, login
+  meta.py               # constants + engine_version, free of anything that can spend money
   models.py             # Inventory, Tool, Trace, ToolCall, Finding, Verdict, Report (pydantic v2)
   capture/stdio.py      # spawn + initialize + tools/list over stdio (local only)
   capture/http.py       # Streamable HTTP capture (CLI + Cloud; Cloud wraps it in ssrf guard)
@@ -51,7 +58,7 @@ bench/                  # real-server results, head-to-head vs mcp-scan (Phase 2
 action/                 # GitHub Action (composite) (Phase 2)
 cloud/
   api/                  # FastAPI app (package: mcp_audit_cloud)
-  worker/               # arq worker: runs scans, monitors
+  worker/               # arq worker: monitors (capture + hash) and retention. Never a model
   web/                  # Next.js frontend
   infra/                # Dockerfiles, fly.toml, docker-compose.yml for local dev
 docs/ROADMAP.md  docs/SECURITY.md  PROGRESS.md
@@ -67,10 +74,15 @@ docs/ROADMAP.md  docs/SECURITY.md  PROGRESS.md
    max_turns, stub behavior, system scaffolding, tool order. If you add anything to the
    prompt, it goes on both sides identically. A test asserts the request payloads of
    the two arms differ only in `tools[*].description`, schema prose, and `system`.
-3. **The Cloud never executes user-supplied code.** Cloud accepts (a) an inventory JSON
-   captured by the user's CLI, or (b) an `https://` Streamable HTTP URL fetched through
-   the SSRF guard. Stdio in the cloud is forbidden — no "just this once", no sandbox
-   shortcut. See SECURITY.md §2.
+3. **The Cloud never executes user-supplied code.** Cloud accepts (a) a finished `Report`
+   from the user's own CLI or CI run, or (b) an `https://` Streamable HTTP URL fetched
+   through the SSRF guard — for `tools/list` only, to hash it for monitoring. Stdio in the
+   cloud is forbidden — no "just this once", no sandbox shortcut. See SECURITY.md §2.
+3'. **The Cloud never calls a model.** No LLM key in its config, no import of `harness`,
+   `audit` or `cost` (`mcp_audit.meta` exists so it can read constants without them). This
+   is what makes hosted scanning free for us to operate, so it is an invariant and not a
+   preference. Tested by grep in both `tests/test_invariants.py` and
+   `cloud/api/tests/test_economics.py`.
 4. **Audited servers never see our secrets.** Stdio servers are spawned with a minimal
    env allowlist (`PATH`, `HOME`, `LANG`, plus explicit `--env K=V` from the user).
    `ANTHROPIC_API_KEY` and anything matching `*KEY*|*TOKEN*|*SECRET*` is never passed.
@@ -81,8 +93,10 @@ docs/ROADMAP.md  docs/SECURITY.md  PROGRESS.md
 6. **Verdict thresholds are specified, not tuned by vibes.** They live in
    `differ.py` constants, are documented in ROADMAP §1.4, and changing them requires
    re-running the fixture gate and updating `bench/`. Ask before changing.
-7. **Money guards are hard stops.** CLI refuses to exceed `--max-cost`. Cloud checks
-   plan quota atomically *before* enqueue and has a global daily spend breaker.
+7. **Money guards are hard stops.** The CLI refuses to exceed `--max-cost`, which protects
+   the *user's* bill. The Cloud has no spend to guard (invariant 3'); its limits are
+   storage and anti-abuse, reserved atomically under a row lock so a burst cannot exceed
+   them.
 
 ## Decisions already made (don't relitigate; flag if you find a real problem)
 
@@ -99,7 +113,9 @@ docs/ROADMAP.md  docs/SECURITY.md  PROGRESS.md
 | D9 | Billing: **Dodo Payments** (Merchant of Record) behind a `BillingProvider` interface; Polar as fallback adapter | Stripe India is invite-only; MoR handles global tax |
 | D10 | Hosting: web on Vercel; api + worker on Fly.io; Postgres on Neon; Redis on Upstash | Cheap, managed |
 | D11 | Email: Resend. Errors: Sentry. Logs: structlog JSON | |
-| D12 | Cloud never supports BYOK — we don't store customer LLM keys | Fewer secrets to lose |
+| D12 | ~~Cloud never supports BYOK~~ → **Cloud never touches a model at all.** Scans run on the user's key, wherever that key already lives; Cloud ingests the finished report. It holds no LLM key — not the customer's, not ours | Inference cost is zero by construction, and a breach of our database cannot reach anyone's billing account. Revised 2026-09-25 |
+| D13 | Two plans sold: Free and Pro. Team is built and kept in code (`listed=False`), not advertised | Seats are where a security tool gets bought, so it comes back the day someone asks — one flag |
+| D14 | Plan limits bound storage, bandwidth and abuse, never spend. `reports_per_month`, not `scans_per_month` | There is no inference bill to hedge; a wrong limit costs us disk |
 
 ## Commands
 
@@ -111,6 +127,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy src                      # strict on src/mcp_audit
 uv run mcp-audit scan python fixtures/poisoned_instructions.py --trials 5
 uv run mcp-audit inspect --url https://example.com/mcp --header "Authorization: Bearer $T"
+uv run mcp-audit scan python fixtures/clean.py --push   # store the report in Cloud
 
 # cloud (Phase 3+)
 docker compose -f cloud/infra/docker-compose.yml up -d   # postgres + redis
@@ -147,6 +164,8 @@ pnpm --dir cloud/web test && pnpm --dir cloud/web exec playwright test
 - Change verdict thresholds, trial defaults, or the sanitizer's keep/strip lists.
 - Run anything that spends real API money beyond ~$2 (live tests, bench runs).
 - Add a paid feature, change plan limits/prices, or alter webhook → subscription logic.
+- Reintroduce anything that would make the Cloud call a model (invariant 3'). That is a
+  business-model change, not a feature.
 - Publish anything: PyPI release, public benchmark results, naming a vulnerable server
   (responsible disclosure first — ROADMAP §2.4).
 - Touch production infra, DNS, or secrets.

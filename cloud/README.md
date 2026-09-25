@@ -2,19 +2,23 @@
 
 AGPL-3.0 (see `cloud/LICENSE`). The engine under `src/mcp_audit/` stays MIT.
 
-Cloud sells convenience, history, rug-pull monitoring, CI integration and teams. It
-runs **the same engine** as the CLI — `mcp_audit.audit()`, unchanged — so a hosted
-verdict is a verdict you can reproduce locally for free. The CLI is never crippled to
-push people here (CLAUDE.md).
+Cloud sells history, rug-pull monitoring, CI integration, sharing and teams. It does **not**
+sell verdicts: those come from the CLI, free and unlimited, and what lands here is the
+report that CLI produced. The CLI is never crippled to push people here (CLAUDE.md).
 
 ## Hard rules
 
-- **No stdio, ever.** Cloud accepts an inventory JSON captured by the user's own CLI, or
-  an `https://` Streamable HTTP URL fetched through the SSRF guard. There is no code
-  path here that spawns a process from user input, and `tests/test_invariants.py` greps
-  this directory to prove it (invariant 3, docs/SECURITY.md §2).
+- **No inference, ever.** This service holds no LLM key and cannot call a model. Scans run
+  where the key already is — the user's machine or their CI — and we ingest the finished
+  report. Two grep tests enforce it (`tests/test_invariants.py` and
+  `tests/test_economics.py`), and `mcp_audit.meta` exists so this package can read engine
+  constants without importing the agent loop. This is what makes hosted scanning cost us
+  nothing to operate, so it is an invariant, not a preference (D12, invariant 3').
+- **No stdio, ever.** Cloud accepts a finished report, or an `https://` Streamable HTTP URL
+  fetched through the SSRF guard for `tools/list` only. No code path here spawns a process
+  from user input (invariant 3, docs/SECURITY.md §2).
 - **No tool execution.** Same grep, same invariant.
-- **No customer LLM keys.** We meter our own (D12).
+- **No customer LLM keys.** Not stored, not accepted, not wanted.
 
 ## Local development
 
@@ -46,6 +50,7 @@ api/mcp_audit_cloud/
   routers/         /v1 endpoints + webhooks
   services/        scans, quota, monitors, notify, headers
   billing/         BillingProvider protocol, Dodo, Polar
-  worker.py        arq settings and jobs
+  worker.py        arq: monitors (capture + hash) and retention. Never a model
+  services/ingest.py  storing a report the user's own run produced
   plans.py         the single source of truth for plan limits
 ```

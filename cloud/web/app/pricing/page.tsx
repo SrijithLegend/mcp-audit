@@ -3,11 +3,11 @@
 import Link from "next/link";
 
 import { usePlans } from "@/lib/api";
-import { Card, Spinner, Table, Row, Cell, ButtonLink } from "@/components/ui";
+import { ButtonLink, Card, Cell, Row, Spinner, Table } from "@/components/ui";
 
 /**
- * Rendered from `GET /v1/plans`, so the page cannot drift from the limits the API
- * actually enforces (plans.py is the single source of truth).
+ * Rendered from `GET /v1/plans`, so the page cannot drift from the limits the API actually
+ * enforces (plans.py is the single source of truth).
  */
 export default function Pricing() {
   const plans = usePlans();
@@ -16,15 +16,15 @@ export default function Pricing() {
       <header className="space-y-2">
         <h1 className="text-xl font-semibold">Pricing</h1>
         <p className="dim max-w-2xl text-sm">
-          The CLI is free and MIT licensed and produces the same verdicts. These plans buy hosted
-          runs on our API key, history, rug-pull monitoring and teams.
+          You pay for the auditing product. You do not pay us for tokens, and we do not pay for
+          yours: scans run on your machine or in your CI, on your own Anthropic key, and that key
+          never reaches us. What these plans buy is everything a local CLI cannot do — history,
+          diffs over time, rug-pull monitoring, sharing, and CI integration.
         </p>
         <p className="dim max-w-2xl text-xs">
-          Plans include <strong>model time</strong> rather than a flat scan count, because a scan
-          is not a fixed-cost unit: a 26-tool server at 10 trials costs many times a 3-tool server
-          at 5. The scan figures are what that budget buys on a typical server. When a budget runs
-          out we pause hosted scanning and say so — we never bill you for overage you did not
-          agree to, and the CLI keeps working on your own key.
+          The scanner itself is MIT licensed and free forever, with no limits of any kind:{" "}
+          <code>uvx mcp-audit scan &lt;server&gt;</code>. If all you want is a verdict, you never
+          need an account.
         </p>
       </header>
 
@@ -33,7 +33,10 @@ export default function Pricing() {
         <Card>
           <p className="text-sm">
             Could not load live plan limits. The canonical table is in{" "}
-            <a href="https://github.com/SrijithLegend/mcp-audit/blob/main/docs/ROADMAP.md" rel="noreferrer noopener">
+            <a
+              href="https://github.com/SrijithLegend/mcp-audit/blob/main/docs/ROADMAP.md"
+              rel="noreferrer noopener"
+            >
               docs/ROADMAP.md §5.1
             </a>
             .
@@ -42,7 +45,7 @@ export default function Pricing() {
       )}
 
       {plans.data && (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           {plans.data.map((plan) => (
             <Card key={plan.plan} title={plan.plan.toUpperCase()}>
               <p className="text-lg font-semibold">
@@ -51,24 +54,23 @@ export default function Pricing() {
               {plan.price_yearly_usd > 0 && (
                 <p className="dim text-xs">or ${plan.price_yearly_usd}/yr</p>
               )}
+              <p className="dim mt-2 text-xs">
+                Model cost: <strong>yours, paid directly to Anthropic</strong>
+              </p>
               <ul className="dim mt-3 space-y-1 text-xs">
-                <li>
-                  ${plan.included_model_usd.toFixed(2)} of model time / month
-                  <span className="block">≈ {plan.scans_per_month} scans on a typical server</span>
-                </li>
+                <li>{plan.reports_per_month} reports kept / month</li>
+                <li>{plan.targets} servers tracked</li>
                 <li>up to {plan.max_trials} trials per arm</li>
-                <li>{plan.remote_targets} remote targets</li>
                 <li>
                   {plan.monitors === 0
-                    ? "no monitoring"
-                    : `${plan.monitors} monitors, every ${Math.round(plan.monitor_min_interval_minutes / 60)}h`}
+                    ? "no rug-pull monitoring"
+                    : `${plan.monitors} monitors, every ${Math.max(
+                        1,
+                        Math.round(plan.monitor_min_interval_minutes / 60),
+                      )}h`}
                 </li>
                 <li>{plan.retention_days} days of history</li>
                 <li>{plan.api_tokens} CI tokens</li>
-                <li>
-                  {plan.seats} seat{plan.seats === 1 ? "" : "s"}
-                  {plan.extra_seat_usd ? ` (+$${plan.extra_seat_usd}/seat)` : ""}
-                </li>
                 <li>{plan.custom_task ? "custom scan tasks" : "default scan task only"}</li>
               </ul>
               <div className="mt-4">
@@ -89,7 +91,7 @@ export default function Pricing() {
         <Table head={["", "included"]}>
           <Row>
             <Cell>Verdict engine</Cell>
-            <Cell>identical to the open-source CLI — same thresholds, same statistics</Cell>
+            <Cell>the open-source CLI — same thresholds, same statistics, no hosted-only logic</Cell>
           </Row>
           <Row>
             <Cell>Exports</Cell>
@@ -101,14 +103,34 @@ export default function Pricing() {
           </Row>
           <Row>
             <Cell>Safety</Cell>
-            <Cell>no tool execution, no stdio in the cloud, no storage of your LLM keys</Cell>
+            <Cell>
+              no tool execution, no stdio in the cloud, and we hold no API key of yours — ours or
+              Anthropic&apos;s
+            </Cell>
           </Row>
         </Table>
       </Card>
 
+      <Card title="Why we do not resell tokens">
+        <p className="dim text-sm">
+          We could bundle model usage and mark it up. We do not, for two reasons. Holding your
+          Anthropic key would make a breach of our database a breach of your billing account, and a
+          security product should not create that risk to save you a config line. And bundling
+          means metering: you would be rationed by our budget rather than your own, and a deep
+          twenty-trial audit of a large server would be something we discourage instead of
+          something you just run.
+        </p>
+        <p className="dim mt-2 text-sm">
+          The practical effect: scan as much as you like, as deeply as you like. Anthropic bills you
+          for what you use — typically a few cents per scan on <code>claude-haiku-4-5</code> — and we
+          charge a flat fee for keeping the results useful.
+        </p>
+      </Card>
+
       <p className="dim text-xs">
         Billing runs through Dodo Payments as merchant of record, so local taxes are handled.{" "}
-        <Link href="/legal/refunds">Refund policy</Link>.
+        <Link href="/legal/refunds">Refund policy</Link>. Need seats for a team?{" "}
+        <a href="mailto:srijithshaibu@gmail.com">Ask</a> — it is built and we will turn it on.
       </p>
     </div>
   );

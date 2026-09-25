@@ -48,11 +48,13 @@ inputs:
     required: false
     default: confirmed
   api-key:
-    description: ANTHROPIC_API_KEY (bring your own key). Mutually exclusive with cloud-token.
+    description: ANTHROPIC_API_KEY. Required -- the scan runs in this job, on your own key.
     required: false
     default: ""
   cloud-token:
-    description: mcp-audit Cloud token (mcpa_...). Captures locally, scans in the Cloud.
+    description: >-
+      Optional mcp-audit Cloud token (mcpa_...). The scan still runs here; this only uploads
+      the finished report for history, diffs and rug-pull monitoring.
     required: false
     default: ""
   sarif:

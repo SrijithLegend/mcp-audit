@@ -8,25 +8,22 @@ the CLI's verdicts, and the whole "confirm it yourself" story would be a lie.
 from __future__ import annotations
 
 from collections.abc import Callable
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
 from typing import Any
 
 from .cost import EXPECTED_TURNS, dollars, estimate, guard
 from .differ import analyse, should_escalate
 from .dryrun import StubMode
-from .harness import CONCURRENCY, DEFAULT_TASK, MAX_TURNS, MODEL, TRIALS, run_both
+from .harness import run_both
+from .meta import CONCURRENCY, DEFAULT_TASK, MAX_TURNS, MODEL, TRIALS, engine_version
 from .models import Inventory, Report, Trace, Usage, Verdict
 from .sanitizer import sanitize, stripped_diff
 
 Progress = Callable[[str], None]
 
 
-def engine_version() -> str:
-    try:
-        return _pkg_version("mcp-audit")
-    except PackageNotFoundError:  # running from a source checkout
-        return "0.0.0+dev"
+#: Re-exported so `from mcp_audit.audit import engine_version` keeps working; it lives in
+#: `meta` because the Cloud needs it and must not import this module.
+__all__ = ["audit", "engine_version", "exit_code"]
 
 
 async def audit(

@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -34,12 +34,12 @@ class OrgOut(BaseModel):
 
 class UsageOut(BaseModel):
     period_start: datetime
-    scans_used: int
-    scans_limit: int
-    cost_usd: float
-    #: The binding limit. `scans_limit` is derived from this at our estimated cost.
-    included_model_usd: float = 0.0
-    model_usd_remaining: float = 0.0
+    #: Reports stored this period, against the plan's anti-abuse limit.
+    reports_used: int
+    reports_limit: int
+    #: What the **customer** spent on their own key, read off the reports they uploaded.
+    #: Informational: it is their bill, and showing it back is the point.
+    your_model_cost_usd: float
 
 
 class MeOut(BaseModel):
@@ -52,23 +52,17 @@ class MeOut(BaseModel):
     usage: UsageOut
 
 
-class ScanCreate(BaseModel):
-    """Exactly one of `inventory` or `target_id` (invariant 3: never a command)."""
+class ReportUpload(BaseModel):
+    """A finished report from the user's own CLI or CI run.
 
+    There is no "run this for me" shape, because running it needs a model and the model is
+    theirs. `inventory` is optional: the report already carries its hash, and sending the
+    inventory as well just lets us store it for the monitoring diff.
+    """
+
+    report: dict[str, Any]
     inventory: dict[str, Any] | None = None
     target_id: UUID | None = None
-    trials: int | None = Field(default=None, ge=2, le=20)
-    task: str | None = Field(default=None, max_length=500)
-    model: str | None = Field(default=None, max_length=80)
-    stub_mode: Literal["canary", "inert"] = "canary"
-    headers: dict[str, str] | None = Field(default=None, description="One-off headers for a remote target")
-
-    @field_validator("headers")
-    @classmethod
-    def _no_giant_headers(cls, value: dict[str, str] | None) -> dict[str, str] | None:
-        if value and (len(value) > 10 or any(len(v) > 4096 for v in value.values())):
-            raise ValueError("too many or too large headers")
-        return value
 
 
 class ScanOut(BaseModel):

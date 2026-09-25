@@ -43,41 +43,34 @@ export default function Dashboard() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Scans</h1>
+          <h1 className="text-xl font-semibold">Reports</h1>
           <p className="dim text-xs">
             {me.data?.current_org?.name} · {me.data?.plan} plan
           </p>
         </div>
         <ButtonLink href="/app/scans/new" variant="primary">
-          New scan
+          Add a report
         </ButtonLink>
       </header>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card title="This period">
           <Meter
-            used={me.data?.usage.scans_used ?? 0}
-            limit={me.data?.usage.scans_limit ?? 0}
-            label="hosted scans"
+            used={me.data?.usage.reports_used ?? 0}
+            limit={me.data?.usage.reports_limit ?? 0}
+            label="reports stored"
           />
-          <div className="mt-3">
-            {/* The limit that actually binds: a big server costs more than a small one,
-                so the scan count above is only the count this budget is expected to buy. */}
-            <Meter
-              used={Math.round((me.data?.usage.cost_usd ?? 0) * 100)}
-              limit={Math.round((me.data?.usage.included_model_usd ?? 0) * 100)}
-              label="included model time (cents)"
-            />
-          </div>
           <p className="dim mt-2 text-xs">
-            {money(me.data?.usage.cost_usd ?? 0)} of {money(me.data?.usage.included_model_usd ?? 0)}{" "}
-            used. Whichever runs out first pauses hosted scanning — the CLI stays free and
-            unlimited on your own key.
+            {/* Their bill, not ours. Scans run on their key, so this is the only number
+                anyone is spending and it belongs to them. */}
+            Your own Anthropic spend on these audits:{" "}
+            <strong>{money(me.data?.usage.your_model_cost_usd ?? 0)}</strong>. We never charge for
+            model time — scanning with the CLI is free and unlimited.
           </p>
         </Card>
         <Card title="Recent verdicts">
           {Object.keys(counts).length === 0 ? (
-            <Empty>Nothing scanned yet.</Empty>
+            <Empty>Nothing uploaded yet.</Empty>
           ) : (
             <ul className="space-y-1 text-xs">
               {Object.entries(counts).map(([key, count]) => (
@@ -92,13 +85,13 @@ export default function Dashboard() {
         <Card title="Where to go next">
           <ul className="dim space-y-1 text-xs">
             <li>
-              <Link href="/app/targets">Targets</Link> — remote endpoints you scan repeatedly
+              <Link href="/app/targets">Targets</Link> — remote servers to watch
             </li>
             <li>
               <Link href="/app/monitors">Monitors</Link> — catch a server that changes under you
             </li>
             <li>
-              <Link href="/app/settings/tokens">CI tokens</Link> — scan from your pipeline
+              <Link href="/app/settings/tokens">CI tokens</Link> — push reports from your pipeline
             </li>
           </ul>
         </Card>
@@ -109,16 +102,20 @@ export default function Dashboard() {
           <Spinner />
         ) : rows.length === 0 ? (
           <Empty>
-            No scans yet. <Link href="/app/scans/new">Upload an inventory</Link> to start.
+            No reports yet. Run <code>mcp-audit scan &lt;server&gt; --push</code>, or{" "}
+            <Link href="/app/scans/new">upload one</Link>.
           </Empty>
         ) : (
-          <Table head={["verdict", "status", "target", "trials", "cost", "when", ""]}>
+          <Table head={["verdict", "server", "trials", "their cost", "scanned", ""]}>
             {rows.map((scan) => (
               <Row key={scan.id}>
                 <Cell>
-                  {scan.verdict ? <VerdictBadge verdict={scan.verdict} /> : <span className="dim">—</span>}
+                  {scan.verdict ? (
+                    <VerdictBadge verdict={scan.verdict} />
+                  ) : (
+                    <span className="dim">—</span>
+                  )}
                 </Cell>
-                <Cell>{scan.status}</Cell>
                 <Cell className="max-w-xs truncate">
                   {scan.target_id
                     ? visible(scan.target_id.slice(0, 8))
@@ -126,7 +123,7 @@ export default function Dashboard() {
                 </Cell>
                 <Cell>{scan.trials}</Cell>
                 <Cell>{money(scan.cost_usd)}</Cell>
-                <Cell className="dim">{ago(scan.created_at)}</Cell>
+                <Cell className="dim">{ago(scan.finished_at ?? scan.created_at)}</Cell>
                 <Cell>
                   <Link href={`/app/scans/${scan.id}`}>open</Link>
                 </Cell>

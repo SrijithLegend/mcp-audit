@@ -1,8 +1,14 @@
 """Rug-pull detection: capture, compare hashes, scan on change, tell the customer.
 
-This is the feature that justifies a subscription rather than a one-off payment, so it
-gets the care: the diff is structural *and* textual, the auto-scan is attributed to the
-monitor, and a target that starts failing pauses itself instead of retrying forever.
+This is the feature that justifies a subscription rather than a one-off payment, and it is
+also the half of the product that needs no model at all: capture `tools/list`, hash it,
+compare. So it runs on our infrastructure, for free, on a schedule, which is exactly what a
+local CLI cannot do.
+
+What it deliberately does **not** do is re-scan. Deciding whether the new text steers a model
+needs inference, the key for that is the customer's, and this code runs when nobody is
+watching. So we alert with the diff and the command to run, and their CI does the scan and
+pushes the report back.
 
 A monitor narrows the rug-pull window; it does not close it. The README says so.
 """
@@ -20,10 +26,9 @@ from mcp_audit.models import Inventory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..errors import Problem
-from ..models import InventoryChange, Monitor, Plan, Scan, ScanStatus, Target, TargetKind
+from ..models import InventoryChange, Monitor, Plan, Target, TargetKind
 from ..plans import entitlements
-from . import notify, quota, scans, secrets
+from . import notify, scans, secrets
 
 log = structlog.get_logger()
 
@@ -81,45 +86,17 @@ async def check(db: AsyncSession, redis: Any, monitor: Monitor) -> str:
 
     first_time = monitor.last_sha256 is None
     previous = await _previous_inventory(db, monitor)
-    row = await scans.upsert_inventory(db, monitor.org_id, inventory)
+    await scans.upsert_inventory(db, monitor.org_id, inventory)
 
-    plan = await _plan(db, monitor.org_id)
-    # A monitor-triggered scan costs exactly what a user-triggered one costs, so it takes
-    # a reservation like any other. Without this, monitors were an unmetered way to spend
-    # our model budget -- ten daily monitors is ~300 free scans a month.
-    try:
-        await quota.reserve(db, monitor.org_id, plan)
-    except Problem as exc:
-        # Record the change anyway: knowing the server moved is the valuable half, and it
-        # costs nothing. We just cannot afford to re-scan it right now.
-        await _record_change(db, monitor, previous, inventory, digest, scan_id=None)
-        monitor.last_status = f"changed:unscanned:{exc.code}"
-        await db.flush()
-        await db.commit()
-        await notify.inventory_changed(db, monitor, await _latest_change(db, monitor))
-        log.info("monitor.changed_but_over_budget", monitor_id=str(monitor.id), reason=exc.code)
-        return "changed_unscanned"
-
-    scan = Scan(
-        org_id=monitor.org_id,
-        target_id=target.id,
-        inventory_id=row.id,
-        status=ScanStatus.QUEUED,
-        trials=entitlements(await _plan(db, monitor.org_id)).max_trials,
-        model=_model(),
-        task=target.task,
-        created_via="monitor",
-        queued_at=datetime.now(UTC),
-    )
-    db.add(scan)
-    await db.flush()
-
-    change = await _record_change(db, monitor, previous, inventory, digest, scan_id=scan.id)
+    change = await _record_change(db, monitor, previous, inventory, digest)
     monitor.last_status = "first_capture" if first_time else "changed"
     await db.flush()
     await db.commit()
 
-    await redis.enqueue_job("run_scan", str(scan.id))
+    # No scan is started here, and that is deliberate: scanning needs a model, the model is
+    # the customer's, and this code runs when nobody is watching. Detecting the change is
+    # the half that needs no inference -- so we do that, and tell them how to run the other
+    # half on their own key.
     if not first_time:
         await notify.inventory_changed(db, monitor, change)
     return monitor.last_status
@@ -131,32 +108,20 @@ async def _record_change(
     previous: Inventory | None,
     inventory: Inventory,
     digest: str,
-    scan_id: Any,
 ) -> InventoryChange:
-    """Store what moved. Cheap, and worth doing even when we cannot afford to re-scan."""
+    """Store what moved. One HTTP round trip and a hash produced this; it costs nothing."""
     change = InventoryChange(
         monitor_id=monitor.id,
         org_id=monitor.org_id,
         old_sha256=monitor.last_sha256,
         new_sha256=digest,
         diff=diff(previous, inventory),
-        scan_id=scan_id,
+        scan_id=None,
     )
     db.add(change)
     monitor.last_sha256 = digest
     await db.flush()
     return change
-
-
-async def _latest_change(db: AsyncSession, monitor: Monitor) -> InventoryChange:
-    return (
-        await db.execute(
-            select(InventoryChange)
-            .where(InventoryChange.monitor_id == monitor.id)
-            .order_by(InventoryChange.id.desc())
-            .limit(1)
-        )
-    ).scalar_one()
 
 
 async def _capture(db: AsyncSession, monitor: Monitor, target: Target) -> Inventory:
@@ -199,12 +164,6 @@ async def _record_failure(db: AsyncSession, monitor: Monitor, error: str) -> str
     await db.flush()
     log.info("monitor.error", monitor_id=str(monitor.id), failures=failures, error=error[:200])
     return "error"
-
-
-def _model() -> str:
-    from mcp_audit.harness import MODEL
-
-    return str(MODEL)
 
 
 def diff(old: Inventory | None, new: Inventory) -> dict[str, Any]:

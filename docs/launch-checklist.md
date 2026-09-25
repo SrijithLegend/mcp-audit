@@ -18,9 +18,9 @@ unticked because they have never been run against real infrastructure.
 | 10 | IDOR: cross-org is 404 | `test_api.py::test_cross_org_access_is_404_not_403`, `..._not_in_my_list` | ✅ |
 | 11 | RLS enabled and tested | policies in `alembic/versions/..._initial.py`; `test_api.py` marked `db` | ⬜ needs a Postgres run |
 | 12 | Input limits at ASGI + pydantic | `main.py` body cap + `test_services.py` (tools, depth, nodes, strings, task) | ✅ |
-| 13 | Rate limits + quota race | `test_services.py` limiter tests + `test_api.py::test_the_quota_race_accepts_exactly_the_limit` | ⬜ race test needs Postgres |
-| 14 | Daily spend breaker, fails closed | `test_services.py::test_the_breaker_fails_closed_when_redis_is_down` | ✅ |
-| 15 | Anthropic console spend limit set | outside the repo | ⬜ |
+| 13 | Rate limits + upload race | `test_services.py` limiter tests + `test_api.py::test_the_upload_race_accepts_exactly_the_limit` | ⬜ race test needs Postgres |
+| 14 | **Cloud cannot call a model** (no LLM key, no agent-loop import) | `tests/test_invariants.py::test_the_cloud_never_calls_a_model` + `cloud/api/tests/test_economics.py` (12 tests) | ✅ |
+| 15 | Anthropic console spend limit on *dev* keys (the only ones that spend) | outside the repo | ⬜ |
 | 16 | Webhook signature / replay / stale / out-of-order | `cloud/api/tests/test_billing.py` (18 tests) + `scripts/replay_webhook.py` | ✅ code, ⬜ against real test-mode keys |
 | 17 | CSP / HSTS / headers | `middleware.ts`, `next.config.ts`, `e2e/scan.spec.ts` header + violation tests | ⬜ e2e never executed |
 | 18 | Hidden Unicode shown, never HTML | `cloud/web/tests/text.test.ts`, `report.test.tsx`, `invariants.test.ts` | ✅ |
@@ -44,8 +44,8 @@ would make this document worse than not having it.
 
 **Before taking money**, the four that matter most:
 
-1. Gate 1 (does the engine actually work on a live model?) — and the cost number that sets
-   the prices.
+1. Gate 1 — does the engine actually work on a live model? (It no longer sets prices: plans
+   include no model time, so the measured cost only tells customers what *their* scans cost.)
 2. The restore drill (line 22).
 3. Billing lifecycle against real test-mode keys (line 16).
 4. The Playwright suite actually running (line 17).

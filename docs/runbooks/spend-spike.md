@@ -1,88 +1,58 @@
-# Runbook: spend spike / breaker tripped
+# Runbook: unexpected cost
 
-Money is the failure mode that can end this product, so the controls are layered and the
-outermost one is not in our code.
+**There is no inference bill to spike.** Scans run on the customer's own Anthropic key
+(invariant 3'), the Cloud holds no LLM credential, and a grep test fails the build if any
+code path here could call a model. So this runbook is shorter than it used to be, and the
+first question is different.
 
-## The layers, outermost first
+## If you get an Anthropic invoice you did not expect
 
-1. **Anthropic console spend limit.** Set per environment. If this trips, everything stops
-   and nothing we deploy can override it. That is the point.
-2. **Daily spend breaker** (`DAILY_SPEND_LIMIT_USD`, default $25). A Redis counter of
-   today's estimated spend; new scans get 503 above it. **Fails closed** if Redis is
-   unreachable. This is the number that bounds total monthly exposure — about $750 at the
-   default — whatever the customer mix does.
-3. **Per-org model-time budget** (`plans.included_model_usd`: $0.30 free, $5 Pro, $22 Team),
-   enforced in the same locked transaction as the scan-count reservation. This is the layer
-   that makes the *unit economics* safe rather than only the total.
-4. **Per-scan ceiling**, the lesser of the plan's limit, what is left of that org's budget,
-   and `SCAN_COST_CEILING_USD`. Enforced by the engine's cost guard before the first model
-   call, so an org with $0.04 left cannot start a $0.50 scan.
-5. **Per-org scan count**, derived from the budget, reserved under the same row lock.
+That is not hosted scanning. Check, in order:
 
-## How you know
-
-- 503 responses with `type: .../spend_breaker` and customers saying scanning is paused.
-- The Redis counter: `redis-cli GET breaker:spend:$(date -u +%F)` — micro-dollars.
-- Anthropic usage dashboard climbing faster than scan count would explain.
-
-## Do
-
-1. **Read the number before touching anything.**
+1. **Your own development and testing.** The live fixture gate (`pytest -m gate`) and any
+   `bench/run.py` run without `--dry-run` spend real money on *your* key. That is almost
+   always the answer.
+2. **A key leak.** If the spend is not yours, treat it as a compromised credential and go to
+   [leaked-secret.md](leaked-secret.md) immediately.
+3. **An invariant regression.** Run the grep tests. If `test_the_cloud_never_calls_a_model`
+   fails, somebody reintroduced an inference path into the hosted service and that is the
+   incident:
    ```bash
-   redis-cli GET "breaker:spend:$(date -u +%F)"        # micro-dollars today
-   ```
-   Then get the real spend per scan from our own rows, which is the number that matters:
-   ```sql
-   SELECT date_trunc('hour', finished_at) AS hour,
-          count(*)                        AS scans,
-          sum(cost_micros)/1e6            AS usd,
-          round(avg(cost_micros)/1e6, 4)  AS usd_per_scan
-   FROM scans
-   WHERE finished_at > now() - interval '24 hours'
-   GROUP BY 1 ORDER BY 1 DESC;
-   ```
-2. **Work out which of the three it is.**
-   - *Many scans, normal cost each* → a customer is using what they paid for, or abusing a
-     free tier. Check `created_via` and `org_id`; look at `audit_log`.
-   - *Few scans, huge cost each* → an inventory with hundreds of tools, or `max_turns`
-     being reached every trial. Check `input_tokens` per scan and `stop_reason` in the
-     stored traces.
-   - *Cost with no scans* → something is calling the API outside the scan path. This is the
-     serious one; treat it as a possible key compromise and go to
-     [leaked-secret.md](leaked-secret.md).
-
-   Then check whether any org is over its budget, which should be impossible:
-
-   ```sql
-   SELECT u.org_id, o.plan, u.scans_used, u.cost_micros/1e6 AS spent_usd
-   FROM usage u JOIN orgs o ON o.id = u.org_id
-   WHERE u.period_start = date_trunc('month', now())
-   ORDER BY u.cost_micros DESC LIMIT 20;
+   uv run pytest -q tests/test_invariants.py::test_the_cloud_never_calls_a_model
+   uv run --directory cloud/api pytest -q tests/test_economics.py
    ```
 
-   Spend above that plan's `included_model_usd` means a reservation was bypassed. That is a
-   bug, not a capacity problem: find the code path that created a scan without calling
-   `quota.reserve()`.
-3. **Contain.** Lower the breaker rather than the per-scan ceiling — it stops new spend
-   without changing what a scan means:
-   ```bash
-   fly secrets set DAILY_SPEND_LIMIT_USD=5 -a mcp-audit-worker -a mcp-audit-api
-   ```
-   For a single abusive org, revoke its tokens and set its plan to free; the quota
-   reservation does the rest.
-4. **Tell people.** A breaker trip is a visible outage of hosted scanning. Status page,
-   and point at the CLI.
+## If infrastructure cost climbs
+
+The costs that scale with customers now are storage, bandwidth and queue time.
+
+```sql
+-- biggest consumers of storage this period
+SELECT o.plan, count(*) AS reports, pg_size_pretty(sum(pg_column_size(s.report))::bigint) AS report_bytes
+FROM scans s JOIN orgs o ON o.id = s.org_id
+WHERE s.created_at > date_trunc('month', now())
+GROUP BY o.plan ORDER BY sum(pg_column_size(s.report)) DESC;
+```
+
+- **Reports are capped per plan** and truncated on the way in (arguments to 512 chars, at
+  most 64 traces). An org over its plan's `reports_per_month` cannot store more.
+- **Retention deletes**, nightly, per plan. If storage grows anyway, check that
+  `expire_data` is actually running: `redis-cli LLEN arq:queue` and the worker logs.
+- **Monitors** are one HTTP round trip and a hash each. A Pro org with 25 hourly monitors is
+  600 requests a day, which is noise. If monitor traffic is not noise, look for a monitor
+  pointed at something enormous and check the 2 MB response cap is being applied.
+
+## What to do about a customer costing more than they pay
+
+Storage is the only lever, and the plan limits already bound it. If someone is genuinely
+expensive, they are hitting `reports_per_month` and being refused — which is the system
+working. Do not add an inference path to "help" them: point them at the CLI, which is free
+and unlimited and is the thing they actually want.
 
 ## Do not
 
-- Do not raise the breaker to make the alert stop. Find out why first; that is what the
-  breaker bought you.
-- Do not remove the per-scan ceiling to let "just this one big server" through. A 400-tool
-  inventory at 10 trials is exactly the shape that produces a surprise invoice.
-
-## Afterwards
-
-If the honest cost per scan has moved, the plan table has to move with it: ROADMAP §5.1
-says the limits are computed from the measured cost, and `plans.margin_ok()` is the check.
-Record the new number in `bench/fixtures.md` and re-run that arithmetic before selling
-another month.
+- Do not add an `ANTHROPIC_API_KEY` to the Cloud config to "just run this one scan for a
+  customer". That reverses D12, reintroduces a bill with no ceiling, and the grep test will
+  fail the build — correctly.
+- Do not accept a customer's API key to run scans on their behalf. A breach then reaches
+  their billing account, and we have no business holding that.

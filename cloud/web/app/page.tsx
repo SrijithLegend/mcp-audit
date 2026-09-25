@@ -23,14 +23,17 @@ export default function Landing() {
           report shows you the call.
         </p>
         <div className="flex flex-wrap gap-2">
-          <ButtonLink href="/app/scans/new" variant="primary">
-            Run a hosted scan
+          <ButtonLink href="/docs" variant="primary">
+            Get started
           </ButtonLink>
-          <ButtonLink href="/docs">Read the docs</ButtonLink>
+          <ButtonLink href="/pricing">Pricing</ButtonLink>
         </div>
         <pre className="hostile surface rounded p-3 text-xs">
-          {`# or do it yourself, free, with your own key:
-uvx mcp-audit scan npx -y @some/mcp-server`}
+          {`# free, MIT, unlimited -- runs on your own Anthropic key
+uvx mcp-audit scan npx -y @some/mcp-server
+
+# and keep the history, diffs and rug-pull alerts
+uvx mcp-audit scan npx -y @some/mcp-server --push`}
         </pre>
       </section>
 
@@ -65,7 +68,8 @@ uvx mcp-audit scan npx -y @some/mcp-server`}
         <Card title="Rug-pull monitoring">
           <p className="dim text-xs">
             A server that was clean when you installed it can ship new descriptions tomorrow. We
-            re-capture on a schedule, hash it, and scan again the moment it changes.
+            re-capture on a schedule, hash it, and tell you the moment the text changes — with the
+            diff, and the command to re-audit it.
           </p>
         </Card>
         <Card title="CI that fails honestly">
@@ -99,12 +103,29 @@ uvx mcp-audit scan npx -y @some/mcp-server`}
       <Card title="Questions people actually ask">
         <dl className="space-y-3 text-xs">
           <div>
+            <dt className="font-semibold">Whose API key runs the scan?</dt>
+            <dd className="dim">
+              Yours, on your machine or in your CI. We never hold an Anthropic key — not yours, and
+              not one of ours for your scans. A test in the repository greps the hosted service to
+              prove no code path there can call a model at all. So you are never rationed by our
+              budget, and a breach of our database cannot touch your billing account.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold">Then what am I paying for?</dt>
+            <dd className="dim">
+              Everything a local CLI cannot do: history you can diff, monitoring that runs while
+              you sleep, share links, SARIF in code scanning, and a team that can see all of it.
+              The verdict itself is free forever.
+            </dd>
+          </div>
+          <div>
             <dt className="font-semibold">Do you run my server?</dt>
             <dd className="dim">
-              Not in the cloud, ever. Hosted scans take either an inventory JSON your own CLI
-              captured, or an <code>https://</code> endpoint we fetch through an SSRF guard. Running a
-              stdio server means executing its code, and that only happens on your machine, by
-              your choice.
+              Not in the cloud, ever. Running a stdio server means executing its code, and that only
+              happens on your machine, by your choice. For monitoring we fetch an{" "}
+              <code>https://</code> endpoint through an SSRF guard and read its tool list — nothing
+              else.
             </dd>
           </div>
           <div>
@@ -114,8 +135,8 @@ uvx mcp-audit scan npx -y @some/mcp-server`}
           <div>
             <dt className="font-semibold">Is the hosted version more capable than the CLI?</dt>
             <dd className="dim">
-              No. Same engine, same thresholds, same verdicts. You pay for history, monitoring,
-              teams and not managing an API key — not for the answer.
+              No. It is the same engine and it is literally the CLI&apos;s output. The verdict you
+              get for free is the verdict we store.
             </dd>
           </div>
           <div>
