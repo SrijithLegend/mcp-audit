@@ -17,14 +17,14 @@ import structlog
 from arq.connections import RedisSettings
 from mcp_audit.audit import audit
 from mcp_audit.capture.http import capture_http
-from mcp_audit.errors import ApiError, AuditError
+from mcp_audit.errors import ApiError, AuditError, BudgetError
 from mcp_audit.harness import DEFAULT_TASK, client
 from mcp_audit.models import Inventory
 from sqlalchemy import select
 
 from .config import settings
 from .db import dispose, sessionmaker, set_org
-from .models import InventoryRow, Monitor, Scan, ScanStatus, Target, TargetKind
+from .models import InventoryRow, Monitor, Org, Scan, ScanStatus, Target, TargetKind
 from .services import monitors as monitor_service
 from .services import notify, quota, scans, secrets
 
@@ -56,6 +56,11 @@ async def run_scan(ctx: dict[str, Any], scan_id: str) -> str:
 
         try:
             inventory = await _inventory_for(db, redis, scan)
+            org = (await db.execute(select(Org).where(Org.id == scan.org_id))).scalar_one()
+            # The plan's per-scan ceiling, clamped to what is left of the org's period
+            # budget. Using the global ceiling here -- as this did -- let a Free scan cost
+            # ten times what the Free plan says it may.
+            ceiling = await quota.allowed_scan_cost(db, scan.org_id, org.plan)
             report = await audit(
                 inventory,
                 api=client(settings().anthropic_api_key or None),
@@ -63,17 +68,22 @@ async def run_scan(ctx: dict[str, Any], scan_id: str) -> str:
                 trials=scan.trials,
                 model=scan.model,
                 stub_mode="inert" if scan.stub_mode == "inert" else "canary",
-                max_cost=settings().scan_cost_ceiling_usd,
+                max_cost=ceiling,
                 assume_yes=False,
                 interactive=False,
             )
         except ApiError as exc:
             # Ours, not theirs: give the quota reservation back.
             await _fail(db, scan, "api_error", str(exc))
-            await quota.refund(db, scan.org_id)
+            await quota.refund(db, scan.org_id, scan.cost_micros)
             await db.commit()
             log.warning("scan.api_error", scan_id=scan_id, error=str(exc))
             raise
+        except BudgetError as exc:
+            await _fail(db, scan, "budget_exceeded", str(exc))
+            await db.commit()
+            log.info("scan.over_budget", scan_id=scan_id)
+            return "failed"
         except AuditError as exc:
             await _fail(db, scan, "capture_error", str(exc))
             await db.commit()
@@ -81,7 +91,7 @@ async def run_scan(ctx: dict[str, Any], scan_id: str) -> str:
             return "failed"
         except Exception as exc:
             await _fail(db, scan, "internal_error", f"{type(exc).__name__}")
-            await quota.refund(db, scan.org_id)
+            await quota.refund(db, scan.org_id, scan.cost_micros)
             await db.commit()
             log.exception("scan.crashed", scan_id=scan_id)
             raise

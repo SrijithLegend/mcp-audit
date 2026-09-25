@@ -13,10 +13,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import Principal, new_token, principal
+from ..config import settings
 from ..db import scoped, session
 from ..errors import Problem, not_found
 from ..models import ApiToken, Membership, Org, Plan, Role, User
-from ..plans import entitlements, public_table
+from ..plans import MAX_FREE_ORGS_PER_USER, entitlements, public_table
 from ..ratelimit import token_creation
 from ..schemas import (
     MemberInvite,
@@ -84,6 +85,8 @@ async def me(
             "api_tokens": ent.api_tokens,
             "seats": ent.seats,
             "custom_task": ent.custom_task,
+            "included_model_usd": ent.included_model_usd,
+            "max_cost_per_scan_usd": ent.max_cost_usd,
             "features": list(ent.features),
         },
         usage=UsageOut(
@@ -91,6 +94,11 @@ async def me(
             scans_used=usage.scans_used,
             scans_limit=ent.scans_per_month,
             cost_usd=round((usage.cost_micros or 0) / 1_000_000, 4),
+            # The limit that actually binds: dollars of model time, not scan count.
+            included_model_usd=ent.included_model_usd,
+            model_usd_remaining=round(
+                max(0.0, ent.included_model_usd - (usage.cost_micros or 0) / 1_000_000), 4
+            ),
         ),
     )
 
@@ -103,6 +111,25 @@ async def create_org(
 ) -> OrgOut:
     if who.user_id is None:
         raise Problem(403, "forbidden", "An API token cannot create organisations.")
+
+    # Every organisation carries its own free model-time budget, so without a cap here
+    # "free per org" means "free per org somebody bothers to create" (SECURITY.md §6).
+    free_orgs = (
+        await db.execute(
+            select(func.count())
+            .select_from(Membership)
+            .join(Org, Org.id == Membership.org_id)
+            .where(Membership.user_id == who.user_id, Org.plan == Plan.FREE)
+        )
+    ).scalar_one()
+    if free_orgs >= MAX_FREE_ORGS_PER_USER:
+        raise Problem(
+            402,
+            "too_many_free_orgs",
+            f"An account may own {MAX_FREE_ORGS_PER_USER} free organisations. Upgrade one of "
+            "them, or run scans locally with the CLI, which is free and unlimited.",
+            upgrade_url=f"{settings().web_base_url}/pricing",
+        )
     org = Org(name=body.name, slug=_slug(body.name, who.user_id), personal=False, plan=Plan.FREE)
     db.add(org)
     await db.flush()

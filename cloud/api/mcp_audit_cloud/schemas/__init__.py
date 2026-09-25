@@ -37,6 +37,9 @@ class UsageOut(BaseModel):
     scans_used: int
     scans_limit: int
     cost_usd: float
+    #: The binding limit. `scans_limit` is derived from this at our estimated cost.
+    included_model_usd: float = 0.0
+    model_usd_remaining: float = 0.0
 
 
 class MeOut(BaseModel):

@@ -357,23 +357,49 @@ violations in console on any page.
 ### 5.1 Plans (config in `cloud/api/.../plans.py`, single source of truth, mirrored to
 the pricing page via API `GET /v1/plans`)
 
+**Plans include dollars of model time, not a flat scan count.** A scan is not a fixed-cost
+unit -- a 26-tool server at 10 trials per arm costs many times a 3-tool server at 5 -- so a
+scan count bounds nothing, and a plan priced on one loses money the first time somebody
+points it at a big server. The budget is enforced per period in `services/quota.py`, and the
+advertised scan count is *derived* from it, so the two cannot disagree.
+
 | | Free | Pro | Team |
 |---|---|---|---|
 | Price | $0 | $19/mo ($190/yr) | $79/mo ($790/yr) |
-| Hosted scans / mo | 10 | 300 | 1,500 pooled |
+| **Included model time / mo** | **$0.30** | **$5.00** | **$22.00** |
+| ~ scans at $0.06/scan | 5 | 83 | 366 |
+| Max cost per scan | $0.10 | $0.50 | $1.00 |
+| Worst-case margin | (marketing cost) | $12.86 | $52.26 |
 | Max trials / arm | 5 | 10 | 20 |
 | Remote HTTP targets | 1 | 20 | 100 |
-| Monitors | — | 10, daily | 100, hourly |
+| Monitors | - | 10, daily | 100, hourly |
 | History retention | 7 days | 1 year | 2 years |
 | API tokens / CI | 1 | 10 | 50 |
 | Seats | 1 | 1 | 10 (+$8/seat) |
-| Share links, SARIF | ✓ | ✓ | ✓ |
+| Share links, SARIF | yes | yes | yes |
 
-Prices are placeholders — Srijith decides. Sanity check before launch: measured
-median cost/scan (Gate 1) × plan scans must stay < 30 % of plan price after MoR fees.
-Example: at ~$0.10/scan, Pro's 300 scans = $30 > $19 — **either cost per scan comes
-down (caching, fewer turns) or limits change.** Compute this from real numbers, don't
-ship the table blindly.
+Budgets are 30 % of net revenue after the MoR fee, which is the rule this section always
+stated. The property that follows: **the margin does not depend on the cost estimate being
+right.** `ESTIMATED_COST_PER_SCAN_USD` (provisionally $0.06, deliberately pessimistic) only
+decides how many scans a budget buys. If Gate 1 measures $0.12, customers get half as many
+scans and we keep the same margin -- we never get a bill.
+
+Also bounded, because each of these was a way for hosted scanning to cost us money for
+nothing:
+
+- **Monitor auto-scans take a reservation** like any other scan. They used to bypass quota
+  entirely, which made ten daily monitors about 300 free scans a month.
+- **The per-scan ceiling comes from the plan**, clamped to what is left of the budget. The
+  worker used the global ceiling, so a Free scan could cost 10x what Free says it may.
+- **Free organisations per account are capped** (`MAX_FREE_ORGS_PER_USER`), or "free per
+  org" means "free per org somebody bothers to create".
+- **The global daily breaker** (`DAILY_SPEND_LIMIT_USD`, default $25) bounds everything
+  together: total monthly exposure is at most about $750 whatever the customer mix does, and
+  it fails closed.
+
+Prices remain Srijith's to set. What is no longer negotiable is that a plan's budget stays
+under 30 % of its net revenue: `plans.margin_ok()` and `tests/test_economics.py` fail the
+build otherwise.
 
 ### 5.2 Implementation
 - `BillingProvider` protocol: `create_checkout(org, plan, interval) -> url`,

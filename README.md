@@ -154,6 +154,13 @@ One trial runs the whole inventory, so API calls are roughly `2 × trials × tur
 `count_tokens`, prints an estimate, and **refuses** to exceed `--max-cost` (default
 $1.00). Typical small server at defaults: a few cents on `claude-haiku-4-5`.
 
+The CLI is free and unlimited — you pay Anthropic directly, and we never see the key. The
+hosted service runs on our key instead, so its plans include **dollars of model time**
+rather than a flat scan count: a 26-tool server at 10 trials genuinely costs many times a
+3-tool server at 5, and pretending otherwise would mean either overcharging small users or
+losing money on large ones. When a budget runs out, hosted scanning pauses and says so.
+There is no surprise overage bill, and the CLI keeps working.
+
 ## Safety
 
 - Stdio capture spawns the server with a minimal environment allowlist. `ANTHROPIC_API_KEY`

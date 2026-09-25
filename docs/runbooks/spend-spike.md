@@ -9,10 +9,15 @@ outermost one is not in our code.
    and nothing we deploy can override it. That is the point.
 2. **Daily spend breaker** (`DAILY_SPEND_LIMIT_USD`, default $25). A Redis counter of
    today's estimated spend; new scans get 503 above it. **Fails closed** if Redis is
-   unreachable.
-3. **Per-scan ceiling** (`SCAN_COST_CEILING_USD`, default $1.00), enforced by the engine's
-   cost guard before the first model call.
-4. **Per-org quota**, reserved under a row lock before the job is enqueued.
+   unreachable. This is the number that bounds total monthly exposure — about $750 at the
+   default — whatever the customer mix does.
+3. **Per-org model-time budget** (`plans.included_model_usd`: $0.30 free, $5 Pro, $22 Team),
+   enforced in the same locked transaction as the scan-count reservation. This is the layer
+   that makes the *unit economics* safe rather than only the total.
+4. **Per-scan ceiling**, the lesser of the plan's limit, what is left of that org's budget,
+   and `SCAN_COST_CEILING_USD`. Enforced by the engine's cost guard before the first model
+   call, so an org with $0.04 left cannot start a $0.50 scan.
+5. **Per-org scan count**, derived from the budget, reserved under the same row lock.
 
 ## How you know
 
@@ -45,6 +50,19 @@ outermost one is not in our code.
    - *Cost with no scans* → something is calling the API outside the scan path. This is the
      serious one; treat it as a possible key compromise and go to
      [leaked-secret.md](leaked-secret.md).
+
+   Then check whether any org is over its budget, which should be impossible:
+
+   ```sql
+   SELECT u.org_id, o.plan, u.scans_used, u.cost_micros/1e6 AS spent_usd
+   FROM usage u JOIN orgs o ON o.id = u.org_id
+   WHERE u.period_start = date_trunc('month', now())
+   ORDER BY u.cost_micros DESC LIMIT 20;
+   ```
+
+   Spend above that plan's `included_model_usd` means a reservation was bypassed. That is a
+   bug, not a capacity problem: find the code path that created a scan without calling
+   `quota.reserve()`.
 3. **Contain.** Lower the breaker rather than the per-scan ceiling — it stops new spend
    without changing what a scan means:
    ```bash

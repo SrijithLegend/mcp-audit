@@ -214,19 +214,28 @@ def test_incomplete_is_free():
 
 
 # --- pricing sanity (ROADMAP §5.1) ----------------------------------------------
+#
+# The arithmetic itself lives in tests/test_economics.py, which is where the question
+# "can this cost us more than it earns" is answered. These two just pin the shape of the
+# table so a casual edit cannot quietly change what customers were sold.
 
 
-def test_the_plan_table_has_the_documented_limits():
-    assert PLANS[Plan.FREE].scans_per_month == 10
-    assert PLANS[Plan.PRO].scans_per_month == 300
-    assert PLANS[Plan.TEAM].scans_per_month == 1500
+def test_the_plan_table_keeps_its_shape():
+    assert PLANS[Plan.FREE].price_monthly_usd == 0.0
+    assert PLANS[Plan.PRO].price_monthly_usd == 19.0
+    assert PLANS[Plan.TEAM].price_monthly_usd == 79.0
+    # Free gets the default task only: a custom task is the LLM-proxy abuse channel.
     assert PLANS[Plan.FREE].custom_task is False
+    assert PLANS[Plan.PRO].custom_task is True
+    # Each tier buys strictly more model time than the one below it.
+    budgets = [PLANS[p].included_model_usd for p in (Plan.FREE, Plan.PRO, Plan.TEAM)]
+    assert budgets == sorted(budgets) and len(set(budgets)) == 3
 
 
-def test_margins_do_not_work_at_ten_cents_a_scan():
-    """The number ROADMAP §5.1 warns about, as a test rather than a footnote: at
-    $0.10/scan, Pro's 300 scans cost $30 against a $19 price. Gate 1 measures the real
-    cost; if this still fails then, the limits or the price have to move."""
-    assert margin_ok(Plan.PRO, 0.01)
-    assert not margin_ok(Plan.PRO, 0.10)
-    assert margin_ok(Plan.FREE, 999.0)  # free has no margin to protect
+def test_margin_no_longer_depends_on_the_cost_estimate():
+    """The old version of this test took a cost per scan, because the margin used to
+    depend on one. Spend is capped in dollars now, so it does not."""
+    from inspect import signature
+
+    assert list(signature(margin_ok).parameters) == ["plan"]
+    assert all(margin_ok(plan) for plan in Plan)

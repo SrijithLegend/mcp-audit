@@ -20,9 +20,10 @@ from mcp_audit.models import Inventory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..errors import Problem
 from ..models import InventoryChange, Monitor, Plan, Scan, ScanStatus, Target, TargetKind
 from ..plans import entitlements
-from . import notify, scans, secrets
+from . import notify, quota, scans, secrets
 
 log = structlog.get_logger()
 
@@ -82,6 +83,23 @@ async def check(db: AsyncSession, redis: Any, monitor: Monitor) -> str:
     previous = await _previous_inventory(db, monitor)
     row = await scans.upsert_inventory(db, monitor.org_id, inventory)
 
+    plan = await _plan(db, monitor.org_id)
+    # A monitor-triggered scan costs exactly what a user-triggered one costs, so it takes
+    # a reservation like any other. Without this, monitors were an unmetered way to spend
+    # our model budget -- ten daily monitors is ~300 free scans a month.
+    try:
+        await quota.reserve(db, monitor.org_id, plan)
+    except Problem as exc:
+        # Record the change anyway: knowing the server moved is the valuable half, and it
+        # costs nothing. We just cannot afford to re-scan it right now.
+        await _record_change(db, monitor, previous, inventory, digest, scan_id=None)
+        monitor.last_status = f"changed:unscanned:{exc.code}"
+        await db.flush()
+        await db.commit()
+        await notify.inventory_changed(db, monitor, await _latest_change(db, monitor))
+        log.info("monitor.changed_but_over_budget", monitor_id=str(monitor.id), reason=exc.code)
+        return "changed_unscanned"
+
     scan = Scan(
         org_id=monitor.org_id,
         target_id=target.id,
@@ -96,16 +114,7 @@ async def check(db: AsyncSession, redis: Any, monitor: Monitor) -> str:
     db.add(scan)
     await db.flush()
 
-    change = InventoryChange(
-        monitor_id=monitor.id,
-        org_id=monitor.org_id,
-        old_sha256=monitor.last_sha256,
-        new_sha256=digest,
-        diff=diff(previous, inventory),
-        scan_id=scan.id,
-    )
-    db.add(change)
-    monitor.last_sha256 = digest
+    change = await _record_change(db, monitor, previous, inventory, digest, scan_id=scan.id)
     monitor.last_status = "first_capture" if first_time else "changed"
     await db.flush()
     await db.commit()
@@ -114,6 +123,40 @@ async def check(db: AsyncSession, redis: Any, monitor: Monitor) -> str:
     if not first_time:
         await notify.inventory_changed(db, monitor, change)
     return monitor.last_status
+
+
+async def _record_change(
+    db: AsyncSession,
+    monitor: Monitor,
+    previous: Inventory | None,
+    inventory: Inventory,
+    digest: str,
+    scan_id: Any,
+) -> InventoryChange:
+    """Store what moved. Cheap, and worth doing even when we cannot afford to re-scan."""
+    change = InventoryChange(
+        monitor_id=monitor.id,
+        org_id=monitor.org_id,
+        old_sha256=monitor.last_sha256,
+        new_sha256=digest,
+        diff=diff(previous, inventory),
+        scan_id=scan_id,
+    )
+    db.add(change)
+    monitor.last_sha256 = digest
+    await db.flush()
+    return change
+
+
+async def _latest_change(db: AsyncSession, monitor: Monitor) -> InventoryChange:
+    return (
+        await db.execute(
+            select(InventoryChange)
+            .where(InventoryChange.monitor_id == monitor.id)
+            .order_by(InventoryChange.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
 
 
 async def _capture(db: AsyncSession, monitor: Monitor, target: Target) -> Inventory:

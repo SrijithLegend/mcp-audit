@@ -219,6 +219,8 @@ export const Me = z.object({
     api_tokens: z.number().int(),
     seats: z.number().int(),
     custom_task: z.boolean(),
+    included_model_usd: z.number().default(0),
+    max_cost_per_scan_usd: z.number().default(0),
     features: z.array(z.string()).default([]),
   }),
   usage: z.object({
@@ -226,6 +228,9 @@ export const Me = z.object({
     scans_used: z.number().int(),
     scans_limit: z.number().int(),
     cost_usd: z.number(),
+    // The limit that actually binds: scan count is derived from this.
+    included_model_usd: z.number().default(0),
+    model_usd_remaining: z.number().default(0),
   }),
 });
 export type Me = z.infer<typeof Me>;
@@ -235,6 +240,7 @@ export const Plan = z.object({
   price_monthly_usd: z.number(),
   price_yearly_usd: z.number(),
   scans_per_month: z.number().int(),
+  included_model_usd: z.number().default(0),
   max_trials: z.number().int(),
   remote_targets: z.number().int(),
   monitors: z.number().int(),

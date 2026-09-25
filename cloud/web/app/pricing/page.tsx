@@ -19,6 +19,13 @@ export default function Pricing() {
           The CLI is free and MIT licensed and produces the same verdicts. These plans buy hosted
           runs on our API key, history, rug-pull monitoring and teams.
         </p>
+        <p className="dim max-w-2xl text-xs">
+          Plans include <strong>model time</strong> rather than a flat scan count, because a scan
+          is not a fixed-cost unit: a 26-tool server at 10 trials costs many times a 3-tool server
+          at 5. The scan figures are what that budget buys on a typical server. When a budget runs
+          out we pause hosted scanning and say so — we never bill you for overage you did not
+          agree to, and the CLI keeps working on your own key.
+        </p>
       </header>
 
       {plans.isLoading && <Spinner label="Loading plans" />}
@@ -45,7 +52,10 @@ export default function Pricing() {
                 <p className="dim text-xs">or ${plan.price_yearly_usd}/yr</p>
               )}
               <ul className="dim mt-3 space-y-1 text-xs">
-                <li>{plan.scans_per_month} hosted scans / month</li>
+                <li>
+                  ${plan.included_model_usd.toFixed(2)} of model time / month
+                  <span className="block">≈ {plan.scans_per_month} scans on a typical server</span>
+                </li>
                 <li>up to {plan.max_trials} trials per arm</li>
                 <li>{plan.remote_targets} remote targets</li>
                 <li>

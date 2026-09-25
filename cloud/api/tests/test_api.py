@@ -16,6 +16,9 @@ from uuid import UUID
 
 import pytest
 
+from mcp_audit_cloud.models import Plan
+from mcp_audit_cloud.plans import entitlements
+
 # Runs against Postgres when the compose stack is up, SQLite otherwise. The two tests
 # that are genuinely about Postgres (row locking, RLS) take the `postgres` fixture and
 # skip without it.
@@ -89,7 +92,11 @@ async def test_me_creates_a_personal_org_on_first_sight(client):
     body = response.json()
     assert body["plan"] == "free"
     assert body["current_org"]["personal"] is True
-    assert body["usage"]["scans_limit"] == 10
+    free = entitlements(Plan.FREE)
+    assert body["usage"]["scans_limit"] == free.scans_per_month
+    # The limit that actually binds is money, and the UI is told about it.
+    assert body["usage"]["included_model_usd"] == free.included_model_usd
+    assert body["usage"]["model_usd_remaining"] == free.included_model_usd
     assert body["entitlements"]["custom_task"] is False
 
 
@@ -122,22 +129,76 @@ async def test_trials_are_capped_by_plan(client):
     assert response.json()["trials"] == 5  # free plan maximum
 
 
-async def test_quota_is_enforced_and_returns_402(client, monkeypatch):
+async def test_scanning_is_refused_once_the_plan_runs_out(client, monkeypatch):
+    """Whichever limit runs out first -- model budget or scan count -- says so with a code
+    the UI can explain and an upgrade link."""
     from mcp_audit_cloud.config import settings
 
-    # Raise the per-minute cap so this test measures the *quota*, not the throttle.
+    # Raise the per-minute cap so this measures the *plan*, not the throttle.
     monkeypatch.setattr(settings(), "rate_limit_scans_per_min", 1000)
     headers = auth("d@example.com")
-    for _ in range(10):
-        assert (
-            await client.post("/v1/scans", headers=headers, json={"inventory": INVENTORY})
-        ).status_code in (
-            200,
-            202,
-        )
-    response = await client.post("/v1/scans", headers=headers, json={"inventory": _variant("over-quota")})
+
+    accepted = 0
+    problem = None
+    for index in range(entitlements(Plan.FREE).scans_per_month + 5):
+        response = await client.post("/v1/scans", headers=headers, json={"inventory": _variant(f"n{index}")})
+        if response.status_code in (200, 202):
+            accepted += 1
+            continue
+        problem = response.json()
+        assert response.status_code == 402, response.text
+        break
+
+    assert problem is not None, "the free plan never ran out"
+    assert problem["type"].rsplit("/", 1)[-1] in ("quota_exceeded", "budget_exceeded")
+    assert "upgrade_url" in problem
+    assert accepted <= entitlements(Plan.FREE).scans_per_month
+
+
+async def test_a_spent_model_budget_refuses_before_any_scan_count_is_reached(client, db, monkeypatch):
+    """The leak this closes: cost was recorded and never read, so a customer whose scans
+    were expensive got the full scan count anyway -- on our money."""
+    from mcp_audit_cloud.config import settings
+
+    monkeypatch.setattr(settings(), "rate_limit_scans_per_min", 1000)
+    headers = auth("budget@example.com")
+    me = (await client.get("/v1/me", headers=headers)).json()
+
+    # One expensive scan's worth of spend, booked as if the worker had reported it.
+    from uuid import UUID as _UUID
+
+    from mcp_audit_cloud.services import quota
+
+    await quota.record_cost(
+        db, _UUID(me["current_org"]["id"]), int(entitlements(Plan.FREE).included_model_usd * 1_000_000)
+    )
+    await db.commit()
+
+    response = await client.post("/v1/scans", headers=headers, json={"inventory": INVENTORY})
     assert response.status_code == 402
-    assert response.json()["type"].endswith("quota_exceeded")
+    assert response.json()["type"].endswith("budget_exceeded")
+    # Still zero scans used: it is the money that ran out.
+    assert (await client.get("/v1/me", headers=headers)).json()["usage"]["scans_used"] == 0
+
+
+async def test_an_account_cannot_mint_unlimited_free_organisations(client):
+    """Every org carries its own free budget, so this cap is what makes "free" bounded."""
+    from mcp_audit_cloud.plans import MAX_FREE_ORGS_PER_USER
+
+    headers = auth("orgspam@example.com")
+    await client.get("/v1/me", headers=headers)  # creates the personal org
+
+    created = 0
+    for index in range(MAX_FREE_ORGS_PER_USER + 3):
+        response = await client.post("/v1/orgs", headers=headers, json={"name": f"org-{index}"})
+        if response.status_code == 201:
+            created += 1
+            continue
+        assert response.status_code == 402
+        assert response.json()["type"].endswith("too_many_free_orgs")
+        break
+    # The personal org counts towards the cap, so at most one more is possible.
+    assert created < MAX_FREE_ORGS_PER_USER + 3
 
 
 @pytest.mark.db
@@ -398,9 +459,12 @@ async def test_plans_endpoint_is_public_and_matches_the_code(client):
     response = await client.get("/v1/plans")
     assert response.status_code == 200
     plans = {p["plan"]: p for p in response.json()}
-    assert plans["free"]["scans_per_month"] == 10
     assert plans["pro"]["monitors"] == 10
     assert plans["team"]["seats"] == 10
+    # The pricing page reads this, so it cannot advertise more than the budget buys.
+    for name, ent in (("free", Plan.FREE), ("pro", Plan.PRO), ("team", Plan.TEAM)):
+        assert plans[name]["scans_per_month"] == entitlements(ent).scans_per_month
+        assert plans[name]["included_model_usd"] == entitlements(ent).included_model_usd
 
 
 async def test_healthz_needs_no_auth(client):

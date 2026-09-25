@@ -17,7 +17,7 @@ const ME = {
   current_org: { id: "o1", name: "e2e", slug: "e2e", plan: "free", personal: true, role: "owner" },
   plan: "free",
   entitlements: {
-    scans_per_month: 10,
+    scans_per_month: 5,
     max_trials: 5,
     remote_targets: 1,
     monitors: 0,
@@ -25,9 +25,18 @@ const ME = {
     api_tokens: 1,
     seats: 1,
     custom_task: false,
+    included_model_usd: 0.3,
+    max_cost_per_scan_usd: 0.1,
     features: ["share_links", "sarif"],
   },
-  usage: { period_start: "2026-09-01T00:00:00Z", scans_used: 1, scans_limit: 10, cost_usd: 0.02 },
+  usage: {
+    period_start: "2026-09-01T00:00:00Z",
+    scans_used: 1,
+    scans_limit: 5,
+    cost_usd: 0.06,
+    included_model_usd: 0.3,
+    model_usd_remaining: 0.24,
+  },
 };
 
 const INVENTORY = {
@@ -182,6 +191,33 @@ test("a file that is not an inventory is refused before upload", async ({ page }
   await expect(page.getByRole("button", { name: /Run 10 trials/ })).toBeDisabled();
 });
 
+test("running out of model time is explained, not just refused", async ({ page }) => {
+  await stubApi(page);
+  await page.route(`${API}/v1/scans`, (route) =>
+    route.fulfill({
+      status: 402,
+      contentType: "application/problem+json",
+      json: {
+        type: "https://mcpaudit.dev/problems/budget_exceeded",
+        title: "budget exceeded",
+        status: 402,
+        detail:
+          "This organisation has used the $0.30 of model time included in its plan this period ($0.30 spent). The CLI is unaffected and gives the same verdict on your own key.",
+        upgrade_url: "https://mcpaudit.dev/pricing",
+      },
+    }),
+  );
+  await page.goto("/app/scans/new");
+  await page.setInputFiles('input[type="file"]', {
+    name: "inventory.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(INVENTORY)),
+  });
+  await page.getByRole("button", { name: /Run 10 trials/ }).click();
+  await expect(page.getByText(/model time included in its plan/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Upgrade" })).toBeVisible();
+});
+
 test("a free plan cannot send a custom task", async ({ page }) => {
   await stubApi(page);
   await page.goto("/app/scans/new");
@@ -189,11 +225,19 @@ test("a free plan cannot send a custom task", async ({ page }) => {
   await expect(page.getByText(/Custom tasks are a Pro feature/)).toBeVisible();
 });
 
-test("the dashboard shows usage against the plan", async ({ page }) => {
+test("the dashboard shows both limits, and model time is one of them", async ({ page }) => {
   await stubApi(page);
   await page.goto("/app");
-  await expect(page.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
-  await expect(page.getByText("1 / 10")).toBeVisible();
+  // Two meters: the scan count people understand, and the money that actually binds.
+  await expect(page.getByRole("progressbar", { name: "hosted scans" })).toHaveAttribute(
+    "aria-valuenow",
+    "1",
+  );
+  await expect(
+    page.getByRole("progressbar", { name: /included model time/ }),
+  ).toHaveAttribute("aria-valuenow", "6");
+  await expect(page.getByText("1 / 5")).toBeVisible();
+  await expect(page.getByText(/\$0\.0600 of \$0\.30 used/)).toBeVisible();
 });
 
 test("no CSP violations on any page", async ({ page }) => {

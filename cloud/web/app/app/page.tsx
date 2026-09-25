@@ -60,9 +60,19 @@ export default function Dashboard() {
             limit={me.data?.usage.scans_limit ?? 0}
             label="hosted scans"
           />
+          <div className="mt-3">
+            {/* The limit that actually binds: a big server costs more than a small one,
+                so the scan count above is only the count this budget is expected to buy. */}
+            <Meter
+              used={Math.round((me.data?.usage.cost_usd ?? 0) * 100)}
+              limit={Math.round((me.data?.usage.included_model_usd ?? 0) * 100)}
+              label="included model time (cents)"
+            />
+          </div>
           <p className="dim mt-2 text-xs">
-            {money(me.data?.usage.cost_usd ?? 0)} of model time so far. The CLI is free and
-            unlimited.
+            {money(me.data?.usage.cost_usd ?? 0)} of {money(me.data?.usage.included_model_usd ?? 0)}{" "}
+            used. Whichever runs out first pauses hosted scanning — the CLI stays free and
+            unlimited on your own key.
           </p>
         </Card>
         <Card title="Recent verdicts">
